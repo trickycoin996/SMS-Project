@@ -1,0 +1,175 @@
+.layout-container {
+    display: flex;
+    min-height: 100vh;
+    width: 100%;
+    background-color: var(--background-color);
+    flex-direction: column; /* Allow mobile header stacking */
+}
+
+/* On desktop, container should still be row-based after header if possible, or we just handle it with absolute sidebar */
+@media (min-width: 769px) {
+    .layout-container {
+        flex-direction: row;
+    }
+}
+
+.mobile-header {
+    display: none;
+    background-color: var(--sidebar-bg);
+    color: white;
+    padding: 1rem 1.5rem;
+    align-items: center;
+    gap: 1rem;
+    z-index: 40;
+}
+
+.mobile-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 500;
+}
+
+.menu-toggle {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0;
+}
+
+.sidebar {
+    width: 240px;
+    background-color: var(--sidebar-bg);
+    color: var(--surface-color);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    overflow-y: auto;
+    transition: transform 0.3s ease;
+}
+
+.sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0,0,0,0.5);
+    z-index: 45;
+}
+
+@media (max-width: 768px) {
+    .mobile-header {
+        display: flex;
+        position: sticky;
+        top: 0;
+    }
+
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        transform: translateX(-100%);
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+}
+
+.sidebar-header {
+    padding: 1.5rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.sidebar-header h2 {
+    font-size: 1.25rem;
+    font-weight: 500;
+    margin: 0;
+    color: white;
+}
+
+.nav-menu {
+    flex: 1;
+    padding: 1rem 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.nav-link {
+    padding: 0.75rem 1.75rem;
+    color: var(--sidebar-text);
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 400;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    position: relative;
+    margin: 0.1rem 1rem;
+    border-radius: 0.35rem;
+}
+
+.nav-link:hover {
+    background-color: var(--sidebar-hover);
+    color: white;
+}
+
+.nav-link.active {
+    background-color: var(--primary-color);
+    color: white;
+    font-weight: 500;
+    box-shadow: 0 4px 6px -1px rgba(241, 60, 60, 0.3);
+}
+
+.sidebar-footer {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+}
+
+/* User ID label above the logout button in the sidebar */
+.user-id-label {
+    font-size: 0.8rem;
+    color: var(--sidebar-text);
+    margin-bottom: 0.75rem;
+}
+
+.user-id-label span {
+    color: #ffffff;
+    font-weight: 500;
+}
+
+.logout-btn {
+    width: 100%;
+    background-color: transparent;
+    color: var(--sidebar-text);
+    border: 1px solid var(--sidebar-hover);
+    padding: 0.5rem;
+    font-weight: 400;
+    transition: all 0.2s ease;
+}
+
+.logout-btn:hover {
+    background-color: var(--sidebar-hover);
+    color: white;
+}
+
+.content-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    /* Prevents overflow issues */
+}
+
+.main-content {
+    flex: 1;
+    padding: 2rem;
+    overflow-y: auto;
+}
