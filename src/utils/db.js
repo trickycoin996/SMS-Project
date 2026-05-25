@@ -73,3 +73,14 @@ export const idbStore = {
         });
     }
 };
+
+export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const getStorage = async (key, defaultVal) => {
+    const data = await idbStore.get(key);
+    return data !== undefined ? data : defaultVal;
+};
+
+export const setStorage = async (key, val) => {
+    await idbStore.set(key, val);
+};

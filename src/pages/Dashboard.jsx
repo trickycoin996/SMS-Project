@@ -5,7 +5,7 @@ import './Dashboard.css';
 
 // Dashboard component: shows inventory stats, financial snapshot, low stock items, and top-selling items
 const Dashboard = () => {
-    const { token } = useContext(AuthContext); // token: JWT used to authenticate API requests
+    const { token, formatCurrency } = useContext(AuthContext); // token: JWT used to authenticate API requests
     const [stats, setStats] = useState({ totalProducts: 0, lowStock: 0, totalCategories: 0 }); // stats: high-level inventory KPIs
     const [lowStockItems, setLowStockItems] = useState([]); // lowStockItems: list of products below threshold
     const [analytics, setAnalytics] = useState(null); // analytics: aggregated financial + top-selling data from backend
@@ -50,6 +50,149 @@ const Dashboard = () => {
 
     if (loading) return <div className="loading-state">Loading dashboard...</div>;
 
+    // Helper to calculate SVG Double-Bar Chart
+    const renderSvgChart = () => {
+        if (!analytics || !analytics.months || analytics.months.length === 0) return null;
+        
+        const months = analytics.months;
+        const revenues = analytics.revenue;
+        const expenses = analytics.expenses;
+        
+        const maxVal = Math.max(...revenues, ...expenses, 100);
+        
+        // Dimensions
+        const width = 500;
+        const height = 240;
+        const paddingLeft = 50;
+        const paddingRight = 20;
+        const paddingTop = 30;
+        const paddingBottom = 40;
+        
+        const chartWidth = width - paddingLeft - paddingRight;
+        const chartHeight = height - paddingTop - paddingBottom;
+        
+        const numMonths = months.length;
+        const colWidth = chartWidth / numMonths;
+        const barWidth = Math.min(16, colWidth * 0.3);
+        
+        // Grid y lines
+        const gridLines = [0, 0.25, 0.5, 0.75, 1];
+        
+        return (
+            <div style={{ position: 'relative', width: '100%' }}>
+                <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="240px" style={{ overflow: 'visible' }}>
+                    {/* Grid Lines & Y Axis Labels */}
+                    {gridLines.map((percent, idx) => {
+                        const y = paddingTop + chartHeight * (1 - percent);
+                        const val = maxVal * percent;
+                        return (
+                            <g key={idx}>
+                                <line 
+                                    x1={paddingLeft} 
+                                    y1={y} 
+                                    x2={width - paddingRight} 
+                                    y2={y} 
+                                    stroke="var(--border-color, #e5e7eb)" 
+                                    strokeWidth="1" 
+                                    strokeDasharray="4 4" 
+                                />
+                                <text 
+                                    x={paddingLeft - 8} 
+                                    y={y + 4} 
+                                    textAnchor="end" 
+                                    fontSize="9" 
+                                    fill="var(--text-muted, #6b7280)"
+                                >
+                                    {val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val.toFixed(0)}
+                                </text>
+                            </g>
+                        );
+                    })}
+
+                    {/* Chart Bars */}
+                    {months.map((month, idx) => {
+                        const rev = revenues[idx] || 0;
+                        const exp = expenses[idx] || 0;
+                        
+                        const revHeight = (rev / maxVal) * chartHeight;
+                        const expHeight = (exp / maxVal) * chartHeight;
+                        
+                        const colCenterX = paddingLeft + (idx * colWidth) + (colWidth / 2);
+                        
+                        const revX = colCenterX - barWidth - 2;
+                        const revY = paddingTop + chartHeight - revHeight;
+                        
+                        const expX = colCenterX + 2;
+                        const expY = paddingTop + chartHeight - expHeight;
+                        
+                        return (
+                            <g key={month} className="chart-bar-group">
+                                {/* Revenue Bar */}
+                                <rect 
+                                    x={revX} 
+                                    y={revY} 
+                                    width={barWidth} 
+                                    height={revHeight} 
+                                    fill="var(--primary-color, #3b82f6)" 
+                                    rx="2"
+                                    style={{ transition: 'all 0.3s ease' }}
+                                >
+                                    <title>Revenue: {formatCurrency(rev)}</title>
+                                </rect>
+                                
+                                {/* Expense Bar */}
+                                <rect 
+                                    x={expX} 
+                                    y={expY} 
+                                    width={barWidth} 
+                                    height={expHeight} 
+                                    fill="var(--danger-color, #ef4444)" 
+                                    rx="2"
+                                    style={{ transition: 'all 0.3s ease' }}
+                                >
+                                    <title>Expenses: {formatCurrency(exp)}</title>
+                                </rect>
+
+                                {/* X-Axis Month label */}
+                                <text 
+                                    x={colCenterX} 
+                                    y={height - paddingBottom + 18} 
+                                    textAnchor="middle" 
+                                    fontSize="9" 
+                                    fill="var(--text-color, #374151)"
+                                >
+                                    {month}
+                                </text>
+                            </g>
+                        );
+                    })}
+
+                    {/* X Axis line */}
+                    <line 
+                        x1={paddingLeft} 
+                        y1={paddingTop + chartHeight} 
+                        x2={width - paddingRight} 
+                        y2={paddingTop + chartHeight} 
+                        stroke="var(--border-color, #e5e7eb)" 
+                        strokeWidth="1.5" 
+                    />
+                </svg>
+
+                {/* Legend */}
+                <div style={{ display: 'flex', gap: '1.5rem', justifyContent: 'center', marginTop: '0.75rem', fontSize: '0.85rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span style={{ display: 'inline-block', width: '12px', height: '12px', backgroundColor: 'var(--primary-color, #3b82f6)', borderRadius: '2px' }}></span>
+                        <span style={{ color: 'var(--text-color)' }}>Revenue</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span style={{ display: 'inline-block', width: '12px', height: '12px', backgroundColor: 'var(--danger-color, #ef4444)', borderRadius: '2px' }}></span>
+                        <span style={{ color: 'var(--text-color)' }}>Expenses</span>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div className="dashboard-container">
             <header className="dashboard-header">
@@ -78,7 +221,7 @@ const Dashboard = () => {
             {analytics && (
                 <section className="dashboard-card" style={{ marginBottom: '1rem' }}>
                     <h2 className="card-title">Financial Snapshot</h2>
-                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.5rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem' }}>
                         <div>
                             <h3 style={{ fontSize: '0.85rem', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
                                 Monthly Revenue vs Expenses
@@ -86,33 +229,7 @@ const Dashboard = () => {
                             {analytics.months.length === 0 ? (
                                 <div className="empty-state">No invoice or expense history yet.</div>
                             ) : (
-                                <div className="table-responsive">
-                                    <table className="trends-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Month</th>
-                                                <th>Revenue</th>
-                                                <th>Expenses</th>
-                                                <th>Net (Revenue - Expenses)</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {analytics.months.map((m, idx) => (
-                                                <tr key={m}>
-                                                    <td>{m}</td>
-                                                    <td>${Number(analytics.revenue[idx] || 0).toFixed(2)}</td>
-                                                    <td>${Number(analytics.expenses[idx] || 0).toFixed(2)}</td>
-                                                    <td>
-                                                        ${(
-                                                            Number(analytics.revenue[idx] || 0) -
-                                                            Number(analytics.expenses[idx] || 0)
-                                                        ).toFixed(2)}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                renderSvgChart()
                             )}
                         </div>
                         <div>
@@ -122,17 +239,45 @@ const Dashboard = () => {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                 <div className="stat-info">
                                     <p className="stat-value text-primary">
-                                        ${Number(analytics.accountsReceivable.total || 0).toFixed(2)}
+                                        {formatCurrency(analytics.accountsReceivable.total || 0)}
                                     </p>
                                     <span className="stat-subtitle">Total Unpaid Invoices</span>
                                 </div>
                                 <div className="stat-info">
                                     <p className="stat-value text-warning">
-                                        ${Number(analytics.accountsReceivable.overdue || 0).toFixed(2)}
+                                        {formatCurrency(analytics.accountsReceivable.overdue || 0)}
                                     </p>
                                     <span className="stat-subtitle">Overdue Amount</span>
                                 </div>
                             </div>
+
+                            {/* Supplementary Table under KPIs */}
+                            {analytics.months.length > 0 && (
+                                <div className="table-responsive" style={{ marginTop: '1.5rem' }}>
+                                    <table className="trends-table" style={{ fontSize: '0.85rem' }}>
+                                        <thead>
+                                            <tr>
+                                                <th>Month</th>
+                                                <th>Revenue</th>
+                                                <th>Expenses</th>
+                                                <th>Net</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {analytics.months.map((m, idx) => (
+                                                <tr key={m}>
+                                                    <td style={{ fontWeight: '500' }}>{m}</td>
+                                                    <td style={{ color: 'var(--primary-color)' }}>{formatCurrency(analytics.revenue[idx] || 0)}</td>
+                                                    <td style={{ color: 'var(--danger-color)' }}>{formatCurrency(analytics.expenses[idx] || 0)}</td>
+                                                    <td style={{ fontWeight: 'bold' }}>
+                                                        {formatCurrency((analytics.revenue[idx] || 0) - (analytics.expenses[idx] || 0))}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </section>

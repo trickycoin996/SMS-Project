@@ -1,6 +1,7 @@
 // Invoices page: manage customer invoices and connect them to inventory
 import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
+import { ToastContext } from '../context/ToastContext';
 import { idbStore } from '../utils/db';
 import { mockApi } from '../services/mockApi';
 import jsPDF from 'jspdf';
@@ -10,7 +11,8 @@ import './Products.css';
 const emptyItem = { product_id: '', description: '', quantity: 1, unit_price: 0 }; // emptyItem: template for a new invoice line
 
 const Invoices = () => {
-    const { token } = useContext(AuthContext); // token: JWT used for authenticated API calls
+    const { token, formatCurrency, storeInfo } = useContext(AuthContext); // token: JWT used for authenticated API calls
+    const { showToast } = useContext(ToastContext);
     const [products, setProducts] = useState([]); // products: list of inventory items available for invoicing
     const [invoices, setInvoices] = useState([]); // invoices: all existing invoices pulled from the backend
     const [loading, setLoading] = useState(true); // loading: controls initial loading spinner
@@ -93,7 +95,7 @@ const Invoices = () => {
 
             const data = await response.json();
             if (!response.ok) {
-                alert(data.error || 'Failed to create invoice');
+                showToast(data.error || 'Failed to create invoice', 'error');
                 return;
             }
 
@@ -106,9 +108,11 @@ const Invoices = () => {
                 notes: '',
                 items: [emptyItem]
             });
+            showToast('Invoice created successfully!', 'success');
             fetchInvoicesAndProducts();
         } catch (err) {
             console.error('Error creating invoice:', err);
+            showToast('Failed to create invoice', 'error');
         }
     };
 
@@ -117,12 +121,14 @@ const Invoices = () => {
             const response = await mockApi.updateInvoiceStatus(id, status);
             const data = await response.json();
             if (!response.ok) {
-                alert(data.error || 'Failed to update status');
+                showToast(data.error || 'Failed to update status', 'error');
                 return;
             }
+            showToast(`Invoice status updated to ${status}`, 'success');
             fetchInvoicesAndProducts();
         } catch (err) {
             console.error('Error updating invoice status:', err);
+            showToast('Failed to update status', 'error');
         }
     };
 
@@ -147,6 +153,15 @@ const Invoices = () => {
         if (phone) doc.text(`Phone: ${phone}`, 14, 40);
         if (email) doc.text(`Email: ${email}`, 14, 45);
 
+        // Fetch currency settings
+        const symbols = {
+            USD: '$',
+            EUR: '€',
+            GBP: '£',
+            LKR: 'Rs'
+        };
+        const currencySymbol = symbols[storeInfo?.currency] || '$';
+
         // Invoice Info
         doc.setFontSize(16);
         doc.setTextColor('#000000');
@@ -155,7 +170,8 @@ const Invoices = () => {
         doc.text(`Invoice Number: ${inv.invoice_number}`, 140, 30);
         doc.text(`Date: ${inv.issue_date?.slice(0, 10)}`, 140, 35);
         doc.text(`Due Date: ${inv.due_date?.slice(0, 10)}`, 140, 40);
-        doc.text(`Status: ${inv.status}`, 140, 45);
+        doc.text(`Currency: ${storeInfo?.currency || 'USD'} (${currencySymbol})`, 140, 45);
+        doc.text(`Status: ${inv.status}`, 140, 50);
 
         // Bill to
         doc.setFontSize(12);
@@ -173,7 +189,7 @@ const Invoices = () => {
             const qty = item.quantity;
             const price = Number(item.unit_price).toFixed(2);
             const lineTotal = (Number(item.quantity) * Number(item.unit_price)).toFixed(2);
-            tableRows.push([description, qty, `$${price}`, `$${lineTotal}`]);
+            tableRows.push([description, qty, `${currencySymbol}${price}`, `${currencySymbol}${lineTotal}`]);
         });
 
         doc.autoTable({
@@ -187,7 +203,7 @@ const Invoices = () => {
         // Totals
         const finalY = doc.lastAutoTable.finalY || 85;
         doc.setFontSize(12);
-        doc.text(`Total Amount: $${Number(inv.total || 0).toFixed(2)}`, 140, finalY + 10);
+        doc.text(`Total Amount: ${currencySymbol}${Number(inv.total || 0).toFixed(2)}`, 140, finalY + 10);
 
         if (inv.notes) {
             doc.setFontSize(10);
@@ -196,6 +212,7 @@ const Invoices = () => {
 
         mockApi.logAction('DOWNLOAD_INVOICE_PDF', `Downloaded PDF for invoice ${inv.invoice_number}`);
         doc.save(`${inv.invoice_number}.pdf`);
+        showToast('Invoice PDF downloaded successfully!', 'success');
     };
 
     if (loading) return <div className="loading-state">Loading invoices...</div>;
@@ -380,7 +397,7 @@ const Invoices = () => {
                                                                 }
                                                             />
                                                         </td>
-                                                        <td>${lineTotal.toFixed(2)}</td>
+                                                        <td>{formatCurrency(lineTotal)}</td>
                                                         <td>
                                                             <button
                                                                 type="button"
@@ -405,8 +422,8 @@ const Invoices = () => {
                                         + Add Line
                                     </button>
                                     <div style={{ textAlign: 'right' }}>
-                                        <div>Subtotal: ${totals.subtotal.toFixed(2)}</div>
-                                        <div style={{ fontWeight: 600 }}>Total: ${totals.total.toFixed(2)}</div>
+                                        <div>Subtotal: {formatCurrency(totals.subtotal)}</div>
+                                        <div style={{ fontWeight: 600 }}>Total: {formatCurrency(totals.total)}</div>
                                     </div>
                                 </div>
                             </div>
@@ -458,7 +475,7 @@ const Invoices = () => {
                                                 {inv.status}
                                             </span>
                                         </td>
-                                        <td>${Number(inv.total || 0).toFixed(2)}</td>
+                                        <td>{formatCurrency(inv.total || 0)}</td>
                                         <td className="action-cells">
                                             {inv.status === 'Draft' && (
                                                 <button

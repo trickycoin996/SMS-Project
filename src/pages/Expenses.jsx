@@ -1,11 +1,13 @@
 // Expenses page: allows logging and listing of store expenses
 import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
+import { ToastContext } from '../context/ToastContext';
 import { mockApi } from '../services/mockApi';
 import './Products.css';
 
 const Expenses = () => {
-    const { token } = useContext(AuthContext); // token: JWT for authenticating API calls
+    const { token, formatCurrency } = useContext(AuthContext); // token: JWT for authenticating API calls
+    const { showToast } = useContext(ToastContext);
     const [expenses, setExpenses] = useState([]); // expenses: list of recorded expenses
     const [loading, setLoading] = useState(true); // loading: spinner state for initial load
     const [searchTerm, setSearchTerm] = useState('');
@@ -49,7 +51,7 @@ const Expenses = () => {
             const res = await mockApi.addExpense(formData);
             const data = await res.json();
             if (!res.ok) {
-                alert(data.error || 'Failed to log expense');
+                showToast(data.error || 'Failed to log expense', 'error');
                 return;
             }
             setFormData({
@@ -60,9 +62,11 @@ const Expenses = () => {
                 description: ''
             });
             setShowForm(false);
+            showToast('Expense logged successfully!', 'success');
             fetchExpenses();
         } catch (err) {
             console.error('Error logging expense:', err);
+            showToast('Failed to log expense', 'error');
         }
     };
 
@@ -208,7 +212,7 @@ const Expenses = () => {
                                         <td className="badge category-badge">{exp.category}</td>
                                         <td>{exp.vendor || '-'}</td>
                                         <td>{exp.description || '-'}</td>
-                                        <td>${Number(exp.amount || 0).toFixed(2)}</td>
+                                        <td>{formatCurrency(exp.amount || 0)}</td>
                                     </tr>
                                 ))}
                             </tbody>

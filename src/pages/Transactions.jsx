@@ -1,10 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
+import { ToastContext } from '../context/ToastContext';
 import { idbStore } from '../utils/db';
 import { mockApi } from '../services/mockApi';
 import jsPDF from 'jspdf';
 import '../index.css';
 
 const Transactions = () => {
+    const { formatCurrency, storeInfo } = useContext(AuthContext);
+    const { showToast } = useContext(ToastContext);
     const [transactions, setTransactions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [monthFilter, setMonthFilter] = useState('All');
@@ -83,10 +87,20 @@ const Transactions = () => {
         doc.setFontSize(10);
         doc.text(`Period: ${monthFilter}`, 14, 38);
 
+        // Fetch currency settings
+        const symbols = {
+            USD: '$',
+            EUR: '€',
+            GBP: '£',
+            LKR: 'Rs'
+        };
+        const currencySymbol = symbols[storeInfo?.currency] || '$';
+        doc.text(`Currency: ${storeInfo?.currency || 'USD'} (${currencySymbol})`, 14, 44);
+
         // Summary
-        doc.text(`Total Income: $${totalIncome.toFixed(2)}`, 14, 48);
-        doc.text(`Total Expense: $${totalExpense.toFixed(2)}`, 14, 54);
-        doc.text(`Net Profit: $${net.toFixed(2)}`, 14, 60);
+        doc.text(`Total Income: ${currencySymbol}${totalIncome.toFixed(2)}`, 14, 52);
+        doc.text(`Total Expense: ${currencySymbol}${totalExpense.toFixed(2)}`, 14, 58);
+        doc.text(`Net Profit: ${currencySymbol}${net.toFixed(2)}`, 14, 64);
 
         const tableColumn = ["Date", "Ref", "Type", "Description", "Amount"];
         const tableRows = filteredTx.map(t => [
@@ -94,11 +108,11 @@ const Transactions = () => {
             t.reference,
             t.type,
             t.description,
-            `$${t.amount.toFixed(2)}`
+            `${currencySymbol}${t.amount.toFixed(2)}`
         ]);
 
         doc.autoTable({
-            startY: 68,
+            startY: 72,
             head: [tableColumn],
             body: tableRows,
             theme: 'striped',
@@ -107,6 +121,7 @@ const Transactions = () => {
 
         mockApi.logAction('DOWNLOAD_LEDGER', `Downloaded ledger for ${monthFilter}`);
         doc.save(`Ledger_${monthFilter.replace(' ','_')}.pdf`);
+        showToast('Ledger PDF downloaded successfully!', 'success');
     };
 
     if (loading) return <div className="loading-state">Loading transactions...</div>;
@@ -134,15 +149,15 @@ const Transactions = () => {
                     <div style={{marginLeft:'auto', display:'flex', gap:'1.5rem', textAlign:'center'}}>
                         <div>
                             <div style={{fontSize:'0.85rem', color:'var(--text-muted)'}}>Income</div>
-                            <div style={{fontSize:'1.2rem', fontWeight:'600', color:'var(--secondary-color)'}}>${totalIncome.toFixed(2)}</div>
+                            <div style={{fontSize:'1.2rem', fontWeight:'600', color:'var(--secondary-color)'}}>{formatCurrency(totalIncome)}</div>
                         </div>
                         <div>
                             <div style={{fontSize:'0.85rem', color:'var(--text-muted)'}}>Expense</div>
-                            <div style={{fontSize:'1.2rem', fontWeight:'600', color:'var(--danger-color)'}}>${totalExpense.toFixed(2)}</div>
+                            <div style={{fontSize:'1.2rem', fontWeight:'600', color:'var(--danger-color)'}}>{formatCurrency(totalExpense)}</div>
                         </div>
                         <div style={{borderLeft:'1px solid var(--border-color)', paddingLeft:'1.5rem'}}>
                             <div style={{fontSize:'0.85rem', color:'var(--text-muted)'}}>Net</div>
-                            <div style={{fontSize:'1.2rem', fontWeight:'600', color: net >= 0 ? 'var(--secondary-color)' : 'var(--danger-color)'}}>${net.toFixed(2)}</div>
+                            <div style={{fontSize:'1.2rem', fontWeight:'600', color: net >= 0 ? 'var(--secondary-color)' : 'var(--danger-color)'}}>{formatCurrency(net)}</div>
                         </div>
                     </div>
                 </div>
@@ -171,7 +186,7 @@ const Transactions = () => {
                                         <span className={`badge ${t.type === 'Income' ? 'good-stock' : 'low-stock'}`}>{t.type}</span>
                                     </td>
                                     <td>{t.description}</td>
-                                    <td style={{fontWeight: '500'}}>${t.amount.toFixed(2)}</td>
+                                    <td style={{fontWeight: '500'}}>{formatCurrency(t.amount)}</td>
                                 </tr>
                             ))}
                         </tbody>
