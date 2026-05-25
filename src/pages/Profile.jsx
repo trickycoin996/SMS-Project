@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
+import { ToastContext } from '../context/ToastContext';
 import { idbStore } from '../utils/db';
 import { mockApi } from '../services/mockApi';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 const Profile = () => {
-    const { user } = useContext(AuthContext);
+    const { user, updateStoreInfoState } = useContext(AuthContext);
+    const { showToast } = useContext(ToastContext);
     const [activeTab, setActiveTab] = useState('user');
-    const [message, setMessage] = useState('');
 
     const [userInfo, setUserInfo] = useState({
         userId: '',
         fullName: '',
+        firstName: '',
+        lastName: '',
         email: ''
     });
 
@@ -20,7 +23,9 @@ const Profile = () => {
         if (user) {
             setUserInfo({
                 userId: user.id || '',
-                fullName: (user.firstName && user.lastName) ? `${user.firstName} ${user.lastName}` : (user.fullName || ''),
+                fullName: `${user.firstName} ${user.lastName}`,
+                firstName: user.firstName || '',
+                lastName: user.lastName || '',
                 email: user.email || ''
             });
         }
@@ -33,14 +38,35 @@ const Profile = () => {
     });
 
     const [employeeData, setEmployeeData] = useState({
-        email: '',
         firstName: '',
         lastName: '',
         password: '',
         allowedPages: []
     });
 
+    const [employees, setEmployees] = useState([]);
+    const [resettingEmployeeId, setResettingEmployeeId] = useState(null);
+    const [newEmployeePassword, setNewEmployeePassword] = useState('');
+
+    // Backup restore states
+    const [backupContent, setBackupContent] = useState(null);
+    const [backupSearchQuery, setBackupSearchQuery] = useState('');
+
     const pagesList = ['dashboard', 'products', 'categories', 'invoices', 'expenses', 'transactions'];
+
+    const fetchEmployees = async () => {
+        const res = await mockApi.getEmployees();
+        if (res.ok) {
+            const data = await res.json();
+            setEmployees(data.employees || []);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'employees' && user?.role === 'admin') {
+            fetchEmployees();
+        }
+    }, [activeTab, user]);
 
     const handleEmployeePageToggle = (page) => {
         setEmployeeData(prev => ({
@@ -54,14 +80,61 @@ const Profile = () => {
     const handleCreateEmployee = async (e) => {
         e.preventDefault();
         const res = await mockApi.addEmployee(employeeData);
+        const data = await res.json();
         if (res.ok) {
-            setMessage('Employee created successfully!');
-            setEmployeeData({ email: '', firstName: '', lastName: '', password: '', allowedPages: [] });
+            showToast('Employee created successfully!', 'success');
+            setEmployeeData({ firstName: '', lastName: '', password: '', allowedPages: [] });
+            fetchEmployees();
         } else {
-            const data = await res.json();
-            setMessage(`Error: ${data.error}`);
+            showToast(`Error: ${data.error}`, 'error');
         }
-        setTimeout(() => setMessage(''), 3000);
+    };
+
+    const handleToggleStatus = async (id) => {
+        const res = await mockApi.toggleEmployeeStatus(id);
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            fetchEmployees();
+        } else {
+            showToast(data.error || 'Failed to toggle status', 'error');
+        }
+    };
+
+    const handleResetEmployeePasswordSubmit = async (e) => {
+        e.preventDefault();
+        if (!newEmployeePassword) {
+            showToast('Please enter a valid password', 'error');
+            return;
+        }
+        const res = await mockApi.resetEmployeePassword(resettingEmployeeId, newEmployeePassword);
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            setResettingEmployeeId(null);
+            setNewEmployeePassword('');
+        } else {
+            showToast(data.error || 'Failed to reset password', 'error');
+        }
+    };
+
+    const handleGenerateEmployeePasskey = async (id) => {
+        const res = await mockApi.generatePasskey(id);
+        const data = await res.json();
+        if (res.ok) {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `passkey_${data.firstName.toLowerCase()}_${data.lastName.toLowerCase()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast(`Passkey file downloaded for ${data.firstName} ${data.lastName}`, 'success');
+        } else {
+            showToast(data.error || 'Failed to generate passkey', 'error');
+        }
     };
 
     const [storeInfo, setStoreInfo] = useState({
@@ -90,30 +163,41 @@ const Profile = () => {
     
     const handleSaveUserInfo = async (e) => {
         e.preventDefault();
-        await mockApi.logAction('UPDATE_PROFILE', 'User updated profile information');
-        setMessage('User information verified and saved!');
-        setTimeout(() => setMessage(''), 3000);
+        // Since login is based on firstName + lastName, we update user store info
+        const savedUsers = await idbStore.get('sms_users') || [];
+        const index = savedUsers.findIndex(u => u.id === user.id);
+        if (index > -1) {
+            savedUsers[index].firstName = userInfo.firstName;
+            savedUsers[index].lastName = userInfo.lastName;
+            savedUsers[index].email = userInfo.email;
+            await idbStore.set('sms_users', savedUsers);
+            showToast('User info updated. Please sign in again if name changes take effect.', 'success');
+        } else {
+            showToast('Failed to save profile details', 'error');
+        }
     };
 
     const handleSavePassword = async (e) => {
         e.preventDefault();
         if (passwordData.newPassword !== passwordData.confirmPassword) {
-            setMessage('Passwords do not match!');
-            setTimeout(() => setMessage(''), 3000);
+            showToast('Passwords do not match!', 'error');
             return;
         }
-        await mockApi.logAction('UPDATE_PASSWORD', 'User updated password');
-        setMessage('Password updated successfully!');
-        setPasswordData({currentPassword: '', newPassword: '', confirmPassword: ''});
-        setTimeout(() => setMessage(''), 3000);
+
+        const res = await mockApi.resetEmployeePassword(user.id, passwordData.newPassword);
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Password updated successfully!', 'success');
+            setPasswordData({currentPassword: '', newPassword: '', confirmPassword: ''});
+        } else {
+            showToast(data.error || 'Failed to update password', 'error');
+        }
     };
 
     const handleSaveStoreInfo = async (e) => {
         e.preventDefault();
-        await idbStore.set('sms_store_info', storeInfo);
-        await mockApi.logAction('UPDATE_STORE_INFO', 'User updated store information');
-        setMessage('Store information saved!');
-        setTimeout(() => setMessage(''), 3000);
+        await updateStoreInfoState(storeInfo);
+        showToast('Store settings saved successfully!', 'success');
     };
 
     const handleLogoUpload = async (e) => {
@@ -123,9 +207,8 @@ const Profile = () => {
             reader.onloadend = async () => {
                 setStoreLogo(reader.result);
                 await idbStore.set('sms_store_logo', reader.result);
-                mockApi.logAction('UPDATE_LOGO', 'User updated store logo');
-                setMessage('Store logo updated successfully!');
-                setTimeout(() => setMessage(''), 3000);
+                await mockApi.logAction('UPDATE_LOGO', 'User updated store logo');
+                showToast('Store logo updated!', 'success');
             };
             reader.readAsDataURL(file);
         }
@@ -143,6 +226,7 @@ const Profile = () => {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         await mockApi.logAction('DOWNLOAD_LOGS', 'User downloaded system action logs');
+        showToast('System logs downloaded.', 'success');
     };
 
     const handleDownloadBackup = async () => {
@@ -163,6 +247,7 @@ const Profile = () => {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         await mockApi.logAction('DOWNLOAD_BACKUP', 'User downloaded system backup');
+        showToast('Database backup downloaded.', 'success');
     };
 
     const handleDownloadBackupPdf = async () => {
@@ -220,6 +305,63 @@ const Profile = () => {
 
         doc.save(`sms_backup_${new Date().toISOString().split('T')[0]}.pdf`);
         await mockApi.logAction('DOWNLOAD_BACKUP_PDF', 'User downloaded system backup as PDF');
+        showToast('PDF Backup generated.', 'success');
+    };
+
+    const handleBackupUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            try {
+                const parsed = JSON.parse(event.target.result);
+                if (mockApi.verifyBackupSchema(parsed)) {
+                    setBackupContent(parsed);
+                    showToast('Backup parsed and verified successfully. Ready to inspect/restore.', 'success');
+                } else {
+                    showToast('Invalid backup file schema. Restore aborted.', 'error');
+                    setBackupContent(null);
+                }
+            } catch (err) {
+                showToast('Failed to parse backup JSON file.', 'error');
+                setBackupContent(null);
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    const handleRestoreConfirm = async () => {
+        if (!backupContent) return;
+        if (window.confirm('Are you absolutely sure you want to restore this backup? This will completely replace your current database.')) {
+            const res = await mockApi.restoreBackup(backupContent);
+            const data = await res.json();
+            if (res.ok) {
+                showToast(data.message, 'success');
+                setBackupContent(null);
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                showToast(data.error || 'Failed to restore backup.', 'error');
+            }
+        }
+    };
+
+    const getFilteredBackupDetails = () => {
+        if (!backupContent) return null;
+        const query = backupSearchQuery.toLowerCase().trim();
+        const results = {};
+        
+        Object.keys(backupContent).forEach(table => {
+            if (Array.isArray(backupContent[table])) {
+                const matched = backupContent[table].filter(row => {
+                    return Object.values(row).some(val => 
+                        String(val).toLowerCase().includes(query)
+                    );
+                });
+                if (matched.length > 0) results[table] = matched;
+            }
+        });
+        return results;
     };
 
     const tabStyle = (isActive) => ({
@@ -236,11 +378,11 @@ const Profile = () => {
         marginBottom: '-1px'
     });
 
+    const filteredBackup = getFilteredBackupDetails();
+
     return (
         <div style={{padding: '2rem'}}>
             <h2 style={{marginBottom: '2rem'}}>Profile & Settings</h2>
-            
-            {message && <div style={{color: 'green', marginBottom: '1.5rem', background: '#dcfce7', padding: '0.75rem', borderRadius: '0.5rem'}}>{message}</div>}
 
             <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-color)', marginBottom: '2rem' }}>
                 <button style={tabStyle(activeTab === 'user')} onClick={() => setActiveTab('user')}>User Information</button>
@@ -262,9 +404,15 @@ const Profile = () => {
                                 <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>User ID</label>
                                 <input type="text" name="userId" value={userInfo.userId} disabled style={{ backgroundColor: '#e5e7eb', cursor: 'not-allowed', color: '#6b7280' }} />
                             </div>
-                            <div style={{marginBottom: '1rem'}}>
-                                <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Full Name</label>
-                                <input type="text" name="fullName" value={userInfo.fullName} onChange={handleUserInfoChange} required />
+                            <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
+                                <div style={{flex: 1}}>
+                                    <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>First Name</label>
+                                    <input type="text" name="firstName" value={userInfo.firstName} onChange={handleUserInfoChange} required />
+                                </div>
+                                <div style={{flex: 1}}>
+                                    <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Last Name</label>
+                                    <input type="text" name="lastName" value={userInfo.lastName} onChange={handleUserInfoChange} required />
+                                </div>
                             </div>
                             <div style={{marginBottom: '1.5rem'}}>
                                 <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Email Address</label>
@@ -371,10 +519,75 @@ const Profile = () => {
                         </div>
                     </div>
 
-                    <div className="glass-panel" style={{maxWidth: '700px'}}>
+                    <div className="glass-panel" style={{maxWidth: '700px', marginBottom: '2rem'}}>
                         <h3 style={{marginBottom: '1rem'}}>Action Logs</h3>
                         <p style={{marginBottom: '1rem', fontSize: '0.9rem', color: 'var(--text-muted)'}}>Download a detailed text file containing all system action logs for auditing and troubleshooting purposes.</p>
                         <button onClick={handleDownloadLogs} style={{backgroundColor: 'var(--secondary-color)'}}>Download Logs (.txt)</button>
+                    </div>
+
+                    <div className="glass-panel" style={{maxWidth: '700px'}}>
+                        <h3 style={{marginBottom: '1rem'}}>Restore Database Backup</h3>
+                        <p style={{marginBottom: '1rem', fontSize: '0.9rem', color: 'var(--text-muted)'}}>Upload a JSON backup file to inspect its contents and restore it to the system.</p>
+                        
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <input 
+                                type="file" 
+                                accept=".json" 
+                                onChange={handleBackupUpload} 
+                                style={{ display: 'block', marginBottom: '1rem' }} 
+                            />
+                        </div>
+
+                        {backupContent && (
+                            <div style={{ border: '1px solid var(--border-color)', borderRadius: '0.5rem', padding: '1rem', background: 'var(--background-color)', marginBottom: '1rem' }}>
+                                <h4 style={{ marginBottom: '0.5rem' }}>Backup File Inspection</h4>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                                    <strong>Detected Data Modules:</strong>
+                                    <ul style={{ margin: '0.5rem 0 0 1rem', padding: 0 }}>
+                                        {Object.keys(backupContent).map(key => (
+                                            <li key={key}>
+                                                {key}: {Array.isArray(backupContent[key]) ? `${backupContent[key].length} records` : 'Key-value config'}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+
+                                <div style={{ marginBottom: '1rem' }}>
+                                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '600', marginBottom: '0.25rem' }}>Search in Backup</label>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Search records in backup file..." 
+                                        value={backupSearchQuery} 
+                                        onChange={(e) => setBackupSearchQuery(e.target.value)} 
+                                        style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+
+                                {backupSearchQuery && filteredBackup && (
+                                    <div style={{ maxHeight: '200px', overflowY: 'auto', background: '#1e1e1e', color: '#d4d4d4', padding: '0.75rem', borderRadius: '0.35rem', fontSize: '0.8rem', fontFamily: 'monospace', marginBottom: '1rem' }}>
+                                        {Object.keys(filteredBackup).length > 0 ? (
+                                            Object.keys(filteredBackup).map(tbl => (
+                                                <div key={tbl} style={{ marginBottom: '0.5rem' }}>
+                                                    <div style={{ color: 'var(--primary-color)', fontWeight: 'bold' }}>[{tbl}]</div>
+                                                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                                        {JSON.stringify(filteredBackup[tbl], null, 2)}
+                                                    </pre>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div style={{ color: '#888' }}>No matches found in backup records.</div>
+                                        )}
+                                    </div>
+                                )}
+
+                                <button 
+                                    onClick={handleRestoreConfirm} 
+                                    style={{ backgroundColor: 'var(--danger-color, #ef4444)', color: 'white', border: 'none', padding: '0.5rem 1rem', borderRadius: '0.35rem', cursor: 'pointer' }}
+                                >
+                                    Confirm Restore Backup
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -394,22 +607,16 @@ const Profile = () => {
                                     <input type="text" value={employeeData.lastName} onChange={(e) => setEmployeeData({...employeeData, lastName: e.target.value})} required />
                                 </div>
                             </div>
-                            <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
-                                <div style={{flex: 1}}>
-                                    <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Email Address</label>
-                                    <input type="email" value={employeeData.email} onChange={(e) => setEmployeeData({...employeeData, email: e.target.value})} required />
-                                </div>
-                                <div style={{flex: 1}}>
-                                    <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Password</label>
-                                    <input type="password" value={employeeData.password} onChange={(e) => setEmployeeData({...employeeData, password: e.target.value})} required />
-                                </div>
+                            <div className="form-group">
+                                <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Initial Password</label>
+                                <input type="password" value={employeeData.password} onChange={(e) => setEmployeeData({...employeeData, password: e.target.value})} required />
                             </div>
-                            
+
                             <div style={{marginBottom: '1.5rem'}}>
                                 <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Access Permissions</label>
                                 <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem'}}>
                                     {pagesList.map(page => (
-                                        <label key={page} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', textTransform: 'capitalize'}}>
+                                        <label key={page} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', textTransform: 'capitalize', cursor: 'pointer'}}>
                                             <input 
                                                 type="checkbox" 
                                                 checked={employeeData.allowedPages.includes(page)}
@@ -421,6 +628,107 @@ const Profile = () => {
                                 </div>
                             </div>
                             <button type="submit">Create Employee</button>
+                        </form>
+                    </div>
+
+                    <div className="glass-panel" style={{maxWidth: '850px'}}>
+                        <h3 style={{marginBottom: '1rem'}}>Manage Employee Accounts</h3>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}>
+                            <thead>
+                                <tr style={{ borderBottom: '2px solid var(--border-color)', textAlign: 'left' }}>
+                                    <th style={{ padding: '0.75rem' }}>Name</th>
+                                    <th style={{ padding: '0.75rem' }}>Status</th>
+                                    <th style={{ padding: '0.75rem' }}>Permissions</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {employees.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="4" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)' }}>No employees found.</td>
+                                    </tr>
+                                ) : (
+                                    employees.map(emp => (
+                                        <tr key={emp.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                            <td style={{ padding: '0.75rem', fontWeight: '500' }}>{emp.firstName} {emp.lastName}</td>
+                                            <td style={{ padding: '0.75rem' }}>
+                                                <span style={{
+                                                    padding: '0.25rem 0.5rem',
+                                                    borderRadius: '0.25rem',
+                                                    fontSize: '0.8rem',
+                                                    fontWeight: '600',
+                                                    backgroundColor: emp.status === 'deleted' ? '#fee2e2' : '#dcfce7',
+                                                    color: emp.status === 'deleted' ? '#ef4444' : '#10b981'
+                                                }}>
+                                                    {emp.status === 'deleted' ? 'Deleted' : 'Active'}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                                {emp.allowedPages?.join(', ') || 'none'}
+                                            </td>
+                                            <td style={{ padding: '0.75rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                                                <button 
+                                                    onClick={() => handleGenerateEmployeePasskey(emp.id)}
+                                                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', backgroundColor: 'var(--secondary-color, #10b981)', color: 'white' }}
+                                                    title="Download Passkey JSON file"
+                                                >
+                                                    <i className="fas fa-key"></i> Key
+                                                </button>
+                                                <button 
+                                                    onClick={() => setResettingEmployeeId(emp.id)}
+                                                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', backgroundColor: '#f59e0b', color: 'white' }}
+                                                >
+                                                    Reset Password
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleToggleStatus(emp.id)}
+                                                    style={{ 
+                                                        padding: '0.35rem 0.65rem', 
+                                                        fontSize: '0.8rem', 
+                                                        backgroundColor: emp.status === 'deleted' ? '#10b981' : '#ef4444', 
+                                                        color: 'white' 
+                                                    }}
+                                                >
+                                                    {emp.status === 'deleted' ? 'Restore' : 'Delete'}
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {/* inline popup form for resetting employee password */}
+            {resettingEmployeeId && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+                }}>
+                    <div className="glass-panel" style={{ width: '400px', padding: '2rem', background: 'var(--card-background-color, #fff)' }}>
+                        <h3 style={{ marginBottom: '1rem' }}>Reset Employee Password</h3>
+                        <form onSubmit={handleResetEmployeePasswordSubmit}>
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>New Password</label>
+                                <input 
+                                    type="password" 
+                                    value={newEmployeePassword} 
+                                    onChange={(e) => setNewEmployeePassword(e.target.value)} 
+                                    required 
+                                    placeholder="Enter new password"
+                                    style={{ width: '100%' }}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                                <button type="button" onClick={() => { setResettingEmployeeId(null); setNewEmployeePassword(''); }} style={{ backgroundColor: '#6b7280' }}>
+                                    Cancel
+                                </button>
+                                <button type="submit" style={{ backgroundColor: '#f59e0b' }}>
+                                    Save New Password
+                                </button>
+                            </div>
                         </form>
                     </div>
                 </div>

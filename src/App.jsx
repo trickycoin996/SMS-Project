@@ -1,7 +1,9 @@
 import React, { useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, AuthContext } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
 import Layout from './components/Layout';
+// We will create these pages next
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -13,13 +15,17 @@ import Expenses from './pages/Expenses';
 import Profile from './pages/Profile';
 import Transactions from './pages/Transactions';
 
+// A helper component to protect routes that require authentication
 const ProtectedRoute = ({ children, page }) => {
     const { isAuthenticated, loading, user } = useContext(AuthContext);
 
+    // Wait until indexedDB check is complete
     if (loading) return <div>Loading session...</div>;
 
+    // If not logged in, redirect to the login page
     if (!isAuthenticated) return <Navigate to="/login" replace />;
 
+    // Employee permission check
     if (page && user?.role === 'employee') {
         if (!user.allowedPages || !user.allowedPages.includes(page)) {
             return <Navigate to="/profile" replace />;
@@ -29,9 +35,11 @@ const ProtectedRoute = ({ children, page }) => {
     return children;
 };
 
+// A helper component to prevent logged-in users from seeing the login/register pages
 const PublicRoute = ({ children }) => {
     const { isAuthenticated, loading } = useContext(AuthContext);
     if (loading) return <div>Loading session...</div>;
+    // If already logged in, redirect to dashboard
     if (isAuthenticated) return <Navigate to="/" replace />;
     return children;
 };
@@ -67,7 +75,9 @@ const AppRoutes = () => {
 const App = () => {
     return (
         <AuthProvider>
-            <AppRoutes />
+            <ToastProvider>
+                <AppRoutes />
+            </ToastProvider>
         </AuthProvider>
     );
 };

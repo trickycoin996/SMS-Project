@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
+import { ToastContext } from '../context/ToastContext';
 import { mockApi } from '../services/mockApi';
 import './Products.css';
 
 const Categories = () => {
     const { token } = useContext(AuthContext);
+    const { showToast } = useContext(ToastContext);
     const [categories, setCategories] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -44,13 +46,15 @@ const Categories = () => {
             if (res.ok) {
                 setFormData({ name: '', description: '' });
                 setShowAddForm(false);
+                showToast('Category added successfully!', 'success');
                 fetchCategories(); // Refresh list
             } else {
                 const err = await res.json();
-                alert(`Error: ${err.error}`);
+                showToast(`Error: ${err.error}`, 'error');
             }
         } catch (err) {
             console.error('Failed to add category', err);
+            showToast('Failed to add category', 'error');
         }
     };
 

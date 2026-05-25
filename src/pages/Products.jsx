@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
+import { ToastContext } from '../context/ToastContext';
 import { mockApi } from '../services/mockApi';
 import './Products.css';
 
 const Products = () => {
-    const { token } = useContext(AuthContext);
+    const { token, formatCurrency } = useContext(AuthContext);
+    const { showToast } = useContext(ToastContext);
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -50,32 +52,32 @@ const Products = () => {
         e.preventDefault();
         try {
             const res = await mockApi.addProduct(formData);
-
             if (res.ok) {
                 setFormData({ name: '', sku: '', category_id: '', price: '', quantity: '' });
                 setShowAddForm(false);
+                showToast('Product added successfully!', 'success');
                 fetchData(); // Refresh list
             } else {
                 const err = await res.json();
-                alert(`Error: ${err.error}`);
+                showToast(`Error: ${err.error}`, 'error');
             }
         } catch (err) {
-            console.error('Failed to add product', err);
+            showToast('Failed to add product', 'error');
         }
     };
 
     const handleTransaction = async (productId, type, qty) => {
         try {
             const res = await mockApi.addTransaction({ product_id: productId, type, quantity: Number(qty) });
-
             if (res.ok) {
+                showToast(`Stock updated (+${qty} units)`, 'success');
                 fetchData();
             } else {
                 const err = await res.json();
-                alert(`Transaction failed: ${err.error}`);
+                showToast(`Transaction failed: ${err.error}`, 'error');
             }
         } catch (err) {
-            console.error('Transaction error', err);
+            showToast('Transaction error', 'error');
         }
     };
 
@@ -156,7 +158,7 @@ const Products = () => {
                             </select>
                         </div>
                         <div className="form-group">
-                            <label>Price ($)</label>
+                            <label>Price</label>
                             <input type="number" step="0.01" name="price" value={formData.price} onChange={handleInputChange} required />
                         </div>
                         <div className="form-group">
@@ -192,7 +194,7 @@ const Products = () => {
                                         <td className="text-muted">{p.sku}</td>
                                         <td className="font-medium">{p.name}</td>
                                         <td><span className="badge category-badge">{p.category_name}</span></td>
-                                        <td>${p.price.toFixed(2)}</td>
+                                        <td>{formatCurrency(p.price || 0)}</td>
                                         <td>
                                             <span className={`stock-badge ${p.quantity < 10 ? 'low-stock' : 'good-stock'}`}>
                                                 {p.quantity}

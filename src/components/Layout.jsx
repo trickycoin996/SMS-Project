@@ -5,12 +5,12 @@ import { mockApi } from '../services/mockApi';
 import './Layout.css';
 
 const Layout = () => {
-    const { user, logout } = useContext(AuthContext);
-    const navigate = useNavigate();
+    const { user, logout } = useContext(AuthContext); // user: logged-in user info, logout: clears auth state
+    const navigate = useNavigate(); // navigate: used to redirect after logout
 
     const handleLogout = () => {
-        logout();
-        navigate('/login');
+        logout(); // clear auth context + localStorage
+        navigate('/login'); // send user back to login screen
     };
 
 
@@ -24,6 +24,7 @@ const Layout = () => {
         return false;
     };
 
+    // Close sidebar on route change for mobile
     useEffect(() => {
         setIsSidebarOpen(false);
     }, [location]);
@@ -39,6 +40,7 @@ const Layout = () => {
 
             {isSidebarOpen && <div className="sidebar-overlay" onClick={() => setIsSidebarOpen(false)}></div>}
 
+            {/* Sidebar Navigation + user info */}
             <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
                 <div className="sidebar-header">
                     <h2>Store Management System</h2>
@@ -55,12 +57,13 @@ const Layout = () => {
 
                 <div className="sidebar-footer">
                     <div className="user-id-label">
-                        User: <span>{user?.firstName} {user?.lastName}</span>
+                        User: <span>{user?.name || `${user?.firstName || ''} ${user?.lastName || ''}`.trim()}</span>
                     </div>
                     <button className="logout-btn" onClick={handleLogout}>Log Out</button>
                 </div>
             </aside>
 
+            {/* Main Content Area (without top navbar now) */}
             <div className="content-wrapper">
                 <main className="main-content">
                     <Outlet />
