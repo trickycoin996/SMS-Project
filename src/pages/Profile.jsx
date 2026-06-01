@@ -7,15 +7,13 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 const Profile = () => {
-    const { user, updateStoreInfoState } = useContext(AuthContext);
+    const { user, updateStoreInfoState, isPasskeyAuthenticated } = useContext(AuthContext);
     const { showToast } = useContext(ToastContext);
     const [activeTab, setActiveTab] = useState('user');
 
     const [userInfo, setUserInfo] = useState({
         userId: '',
-        fullName: '',
-        firstName: '',
-        lastName: '',
+        name: '',
         email: ''
     });
 
@@ -23,9 +21,7 @@ const Profile = () => {
         if (user) {
             setUserInfo({
                 userId: user.id || '',
-                fullName: `${user.firstName} ${user.lastName}`,
-                firstName: user.firstName || '',
-                lastName: user.lastName || '',
+                name: user.name || '',
                 email: user.email || ''
             });
         }
@@ -38,8 +34,7 @@ const Profile = () => {
     });
 
     const [employeeData, setEmployeeData] = useState({
-        firstName: '',
-        lastName: '',
+        name: '',
         password: '',
         allowedPages: []
     });
