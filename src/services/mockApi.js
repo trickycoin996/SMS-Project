@@ -11,6 +11,12 @@ const setStorage = async (key, val) => {
     await idbStore.set(key, val);
 };
 
+const sanitizeString = (str) => {
+    if (typeof str !== 'string') return str;
+    return str.replace(/<[^>]*>/g, '').trim();
+};
+
+
 // Cryptographic helpers using native browser Web Crypto API
 export const generateSalt = () => {
     const array = new Uint32Array(8);
@@ -275,17 +281,26 @@ export const mockApi = {
 
     loginWithPasskey: async (passkeyData) => {
         await delay(500);
+        if (!passkeyData || typeof passkeyData !== 'object') {
+            return { ok: false, json: async () => ({ error: 'Invalid passkey file structure.' }) };
+        }
         const { name, token, devicePublicKey, signature } = passkeyData;
+        if (!name || !token || !devicePublicKey || !signature) {
+            return { ok: false, json: async () => ({ error: 'Missing passkey verification fields.' }) };
+        }
+        
+        const sanitizedName = sanitizeString(name);
+        const sanitizedToken = sanitizeString(token);
         
         // 1. Verify signature with device key
-        const isValidSignature = await verifyData(name + ":" + token, signature, devicePublicKey);
+        const isValidSignature = await verifyData(sanitizedName + ":" + sanitizedToken, signature, devicePublicKey);
         if (!isValidSignature) {
-            await mockApi.logAction('LOGIN_FAILED', `Failed passkey verification for ${name} (Invalid signature)`);
+            await mockApi.logAction('LOGIN_FAILED', `Failed passkey verification for ${sanitizedName} (Invalid signature)`);
             return { ok: false, json: async () => ({ error: 'Invalid passkey cryptographic signature' }) };
         }
 
         let users = await getStorage('sms_users', []);
-        let user = users.find(u => u.name.trim().toLowerCase() === name.trim().toLowerCase());
+        let user = users.find(u => u.name.trim().toLowerCase() === sanitizedName.toLowerCase());
 
         // 2. Clean install recovery auto-registration
         if (!user) {
@@ -293,27 +308,27 @@ export const mockApi = {
             const tempPassword = await hashPassword('password123', salt);
             user = {
                 id: Date.now(),
-                name,
+                name: sanitizedName,
                 role: users.length === 0 ? 'admin' : 'employee',
                 status: 'active',
                 salt,
                 password: tempPassword,
-                passkeyToken: token,
+                passkeyToken: sanitizedToken,
                 devicePublicKey,
                 allowedPages: ['dashboard', 'products', 'categories', 'invoices', 'expenses', 'transactions', 'profile']
             };
             users.push(user);
             await setStorage('sms_users', users);
-            await mockApi.logAction('USER_RECONSTRUCTED', `User ${name} auto-reconstructed from passkey file during reinstall`);
+            await mockApi.logAction('USER_RECONSTRUCTED', `User ${sanitizedName} auto-reconstructed from passkey file during reinstall`);
         }
 
         if (user.status === 'deleted') {
-            await mockApi.logAction('LOGIN_FAILED_DELETED', `Passkey attempt by deleted employee ${name}`);
+            await mockApi.logAction('LOGIN_FAILED_DELETED', `Passkey attempt by deleted employee ${sanitizedName}`);
             return { ok: false, json: async () => ({ error: 'Account has been deleted/disabled.' }) };
         }
 
-        if (user.passkeyToken && user.passkeyToken === token) {
-            await mockApi.logAction('LOGIN_SUCCESS', `User ${name} logged in via Passkey`);
+        if (user.passkeyToken && user.passkeyToken === sanitizedToken) {
+            await mockApi.logAction('LOGIN_SUCCESS', `User ${sanitizedName} logged in via Passkey`);
             return { ok: true, json: async () => ({ 
                 user: { 
                     id: user.id, 
@@ -326,7 +341,7 @@ export const mockApi = {
             })};
         }
 
-        await mockApi.logAction('LOGIN_FAILED', `Failed passkey match attempt for user ${name}`);
+        await mockApi.logAction('LOGIN_FAILED', `Failed passkey match attempt for user ${sanitizedName}`);
         return { ok: false, json: async () => ({ error: 'Invalid passkey token' }) };
     },
     
@@ -339,7 +354,15 @@ export const mockApi = {
             return { ok: false, json: async () => ({ error: 'Registration closed. Further accounts must be created by an Admin.' }) };
         }
 
-        const trimmedName = userData.name.trim();
+        if (!userData || !userData.name || !userData.password) {
+            return { ok: false, json: async () => ({ error: 'Name and Password are required.' }) };
+        }
+
+        const trimmedName = sanitizeString(userData.name);
+        if (!trimmedName || trimmedName.length > 100) {
+            return { ok: false, json: async () => ({ error: 'Invalid name length.' }) };
+        }
+
         if (users.find(u => u.name.toLowerCase() === trimmedName.toLowerCase())) {
             return { ok: false, json: async () => ({ error: 'A user with this name already exists' }) };
         }
@@ -363,7 +386,7 @@ export const mockApi = {
         
         await setStorage('sms_store_info', {
             storeName: 'My Store',
-            currency: userData.currency_code || 'LKR'
+            currency: sanitizeString(userData.currency_code) || 'LKR'
         });
         
         const devicePublicKey = await idbStore.get('sms_device_public_key');
@@ -384,7 +407,16 @@ export const mockApi = {
     addEmployee: async (employeeData) => {
         await delay(500);
         const users = await getStorage('sms_users', []);
-        const trimmedName = employeeData.name.trim();
+        
+        if (!employeeData || !employeeData.name || !employeeData.password) {
+            return { ok: false, json: async () => ({ error: 'Name and Password are required.' }) };
+        }
+
+        const trimmedName = sanitizeString(employeeData.name);
+        if (!trimmedName || trimmedName.length > 100) {
+            return { ok: false, json: async () => ({ error: 'Invalid name length.' }) };
+        }
+
         if (users.find(u => u.name.toLowerCase() === trimmedName.toLowerCase())) {
             return { ok: false, json: async () => ({ error: 'An employee with this name already exists' }) };
         }
@@ -401,7 +433,7 @@ export const mockApi = {
             salt,
             password: hashedPassword,
             passkeyToken,
-            allowedPages: employeeData.allowedPages || []
+            allowedPages: (employeeData.allowedPages || []).map(p => sanitizeString(p))
         };
         users.push(newEmployee);
         await setStorage('sms_users', users);
@@ -409,6 +441,7 @@ export const mockApi = {
         await mockApi.logAction('ADD_EMPLOYEE', `New employee created: ${trimmedName}`);
         return { ok: true, json: async () => ({ message: 'Employee created' }) };
     },
+
 
     getEmployees: async () => {
         await delay(300);
@@ -615,11 +648,20 @@ export const mockApi = {
     addProduct: async (productData) => {
         await delay(300);
         const products = await getStorage('sms_products', []);
+        
+        const priceNum = Number(productData.price);
+        const qtyNum = Number(productData.quantity);
+        if (isNaN(priceNum) || priceNum < 0 || isNaN(qtyNum) || qtyNum < 0) {
+            return { ok: false, json: async () => ({ error: 'Price and Quantity must be non-negative numbers.' }) };
+        }
+
         const newProduct = { 
-            ...productData, 
             id: Date.now(),
-            quantity: Number(productData.quantity) || 0,
-            price: Number(productData.price) || 0
+            name: sanitizeString(productData.name) || 'Unnamed Product',
+            sku: sanitizeString(productData.sku) || '',
+            category_id: productData.category_id ? Number(productData.category_id) : '',
+            quantity: qtyNum,
+            price: priceNum
         };
         products.push(newProduct);
         await setStorage('sms_products', products);
@@ -637,7 +679,11 @@ export const mockApi = {
     addCategory: async (categoryData) => {
         await delay(300);
         const categories = await getStorage('sms_categories', []);
-        const newCategory = { ...categoryData, id: Date.now() };
+        const newCategory = { 
+            id: Date.now(),
+            name: sanitizeString(categoryData.name) || 'Unnamed Category',
+            description: sanitizeString(categoryData.description) || ''
+        };
         categories.push(newCategory);
         await setStorage('sms_categories', categories);
         await mockApi.logAction('ADD_CATEGORY', `Added new category: ${newCategory.name}`);
@@ -651,6 +697,9 @@ export const mockApi = {
         
         const { product_id, type, quantity } = transactionData;
         const qty = Number(quantity);
+        if (isNaN(qty) || qty <= 0) {
+            return { ok: false, json: async () => ({ error: 'Quantity must be a positive number.' }) };
+        }
         
         const productIndex = products.findIndex(p => p.id === Number(product_id));
         if (productIndex === -1) {
@@ -673,7 +722,7 @@ export const mockApi = {
             id: Date.now(),
             product_id: product.id,
             product_name: product.name,
-            type,
+            type: sanitizeString(type),
             quantity: qty,
             date: new Date().toISOString()
         };
@@ -696,19 +745,34 @@ export const mockApi = {
         await delay(300);
         const products = await getStorage('sms_products', []);
 
-        for (const item of invoiceData.items) {
+        const sanitizedItems = (invoiceData.items || []).map(item => {
             const prodIdx = products.findIndex(p => p.id === Number(item.product_id));
+            const qtyNum = Number(item.quantity) || 0;
             if (prodIdx > -1) {
-                products[prodIdx].quantity -= Number(item.quantity);
+                products[prodIdx].quantity -= qtyNum;
             }
-        }
+            return {
+                product_id: item.product_id ? Number(item.product_id) : '',
+                product_name: item.product_name ? sanitizeString(item.product_name) : '',
+                description: sanitizeString(item.description) || '',
+                quantity: qtyNum,
+                unit_price: Number(item.unit_price) || 0
+            };
+        });
         await setStorage('sms_products', products);
 
         const newInvoice = {
-            ...invoiceData,
             id: Date.now(),
             invoice_number: `INV-${Date.now().toString().slice(-6)}`,
-            date: new Date().toISOString()
+            date: new Date().toISOString(),
+            customer_name: sanitizeString(invoiceData.customer_name) || 'Valued Customer',
+            customer_email: sanitizeString(invoiceData.customer_email) || '',
+            issue_date: sanitizeString(invoiceData.issue_date) || '',
+            due_date: sanitizeString(invoiceData.due_date) || '',
+            notes: sanitizeString(invoiceData.notes) || '',
+            status: sanitizeString(invoiceData.status) || 'Draft',
+            total: Number(invoiceData.total) || 0,
+            items: sanitizedItems
         };
         await pushToDailyFifo('sms_invoices_fifo', newInvoice);
 
@@ -724,7 +788,7 @@ export const mockApi = {
         for (let block of fifoInvoices) {
             const idx = block.items.findIndex(i => i.id === Number(id));
             if (idx > -1) {
-                block.items[idx].status = status;
+                block.items[idx].status = sanitizeString(status);
                 invoiceNum = block.items[idx].invoice_number;
                 found = true;
                 break;
@@ -747,10 +811,18 @@ export const mockApi = {
 
     addExpense: async (expenseData) => {
         await delay(300);
+        const amountNum = Number(expenseData.amount);
+        if (isNaN(amountNum) || amountNum < 0) {
+            return { ok: false, json: async () => ({ error: 'Amount must be a non-negative number.' }) };
+        }
+
         const newExpense = {
-            ...expenseData,
             id: Date.now(),
-            amount: Number(expenseData.amount)
+            date: sanitizeString(expenseData.date) || '',
+            category: sanitizeString(expenseData.category) || 'Other',
+            vendor: sanitizeString(expenseData.vendor) || '',
+            description: sanitizeString(expenseData.description) || '',
+            amount: amountNum
         };
         await pushToDailyFifo('sms_expenses_fifo', newExpense);
         

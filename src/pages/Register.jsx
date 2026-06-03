@@ -6,8 +6,7 @@ import './Auth.css';
 
 const Register = () => {
     const [formData, setFormData] = useState({
-        firstName: '',
-        lastName: '',
+        name: '',
         password: '',
         currency_code: 'LKR'
     });
@@ -34,16 +33,78 @@ const Register = () => {
 
     const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
+    const savePasskeyFile = async (passkeyObj) => {
+        const fileContent = JSON.stringify(passkeyObj, null, 2);
+        
+        if (window.showSaveFilePicker) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: `passkey_${passkeyObj.name.toLowerCase().replace(/\s+/g, '_')}.json`,
+                    types: [{
+                        description: 'JSON Files',
+                        accept: {
+                            'application/json': ['.json'],
+                        },
+                    }],
+                });
+                const writable = await handle.createWritable();
+                await writable.write(fileContent);
+                await writable.close();
+                return true;
+            } catch (err) {
+                console.error('File System Access API failed or cancelled:', err);
+                if (err.name === 'AbortError') {
+                    showToast('Passkey save was cancelled. Fallback download triggered.', 'warning');
+                }
+            }
+        }
+        
+        // Standard download fallback
+        try {
+            const blob = new Blob([fileContent], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `passkey_${passkeyObj.name.toLowerCase().replace(/\s+/g, '_')}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            return true;
+        } catch (fallbackErr) {
+            console.error('Fallback download failed:', fallbackErr);
+            return false;
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
+        const trimmedName = formData.name.trim();
+        const trimmedPassword = formData.password.trim();
+
+        if (!trimmedName || !trimmedPassword) {
+            showToast('Name and password are required.', 'error');
+            return;
+        }
+        if (trimmedName.length > 100 || trimmedPassword.length > 100) {
+            showToast('Input values are too long (maximum 100 characters).', 'error');
+            return;
+        }
+
         setLoading(true);
         try {
-            const response = await mockApi.register(formData);
+            const response = await mockApi.register({
+                name: trimmedName,
+                password: trimmedPassword,
+                currency_code: formData.currency_code
+            });
             const data = await response.json();
             if (response.ok) {
+                // Save passkey using file system picker
+                const saved = await savePasskeyFile(data.passkey);
                 setSuccess(true);
                 showToast('Admin account successfully created!', 'success');
-                setTimeout(() => navigate('/login'), 2000);
+                setTimeout(() => navigate('/login'), 2500);
             } else {
                 showToast(data.error || 'Registration failed', 'error');
             }
@@ -81,7 +142,7 @@ const Register = () => {
             <div className="auth-container">
                 <div className="glass-panel auth-card success-card">
                     <h2>Account Created!</h2>
-                    <p>You can now sign in with your credentials.</p>
+                    <p>Your cryptographic passkey file has been generated and saved.</p>
                     <p>Redirecting to login...</p>
                 </div>
             </div>
@@ -95,27 +156,16 @@ const Register = () => {
                 <p className="auth-subtitle">Join SMS to start managing your store efficiently.</p>
 
                 <form onSubmit={handleSubmit}>
-                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-                        <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
-                            <label>First Name</label>
-                            <input 
-                                type="text" 
-                                name="firstName" 
-                                value={formData.firstName} 
-                                onChange={handleChange} 
-                                required 
-                            />
-                        </div>
-                        <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
-                            <label>Last Name</label>
-                            <input 
-                                type="text" 
-                                name="lastName" 
-                                value={formData.lastName} 
-                                onChange={handleChange} 
-                                required 
-                            />
-                        </div>
+                    <div className="form-group">
+                        <label>User Name</label>
+                        <input 
+                            type="text" 
+                            name="name" 
+                            value={formData.name} 
+                            onChange={handleChange} 
+                            required 
+                            placeholder="Full Name"
+                        />
                     </div>
 
                     <div className="form-group">
@@ -130,13 +180,15 @@ const Register = () => {
 
                     <div className="form-group">
                         <label>Password</label>
-                        <div style={{ position: 'relative' }}>
+                        <div style={{ position: 'relative', marginBottom: '1.25rem' }}>
                             <input 
                                 type={showPassword ? "text" : "password"} 
                                 name="password" 
                                 value={formData.password} 
                                 onChange={handleChange} 
                                 required 
+                                placeholder="••••••••"
+                                style={{ marginBottom: 0 }}
                             />
                             <button 
                                 type="button" 

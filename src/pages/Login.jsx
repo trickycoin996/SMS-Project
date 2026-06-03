@@ -6,8 +6,7 @@ import { mockApi } from '../services/mockApi';
 import './Auth.css';
 
 const Login = () => {
-    const [firstName, setFirstName] = useState('');
-    const [lastName, setLastName] = useState('');
+    const [name, setName] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -31,13 +30,25 @@ const Login = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        const trimmedName = name.trim();
+        const trimmedPassword = password.trim();
+        
+        if (!trimmedName || !trimmedPassword) {
+            showToast('Name and password are required.', 'error');
+            return;
+        }
+        if (trimmedName.length > 100 || trimmedPassword.length > 100) {
+            showToast('Input values are too long (maximum 100 characters).', 'error');
+            return;
+        }
+
         setLoading(true);
         try {
-            const response = await mockApi.login(firstName, lastName, password);
+            const response = await mockApi.login(trimmedName, trimmedPassword);
             const data = await response.json();
             if (response.ok) {
-                login(data.user, data.token);
-                showToast(`Successfully logged in as ${data.user.firstName} ${data.user.lastName}`, 'success');
+                login(data.user, data.token, false);
+                showToast(`Successfully logged in as ${data.user.name}`, 'success');
                 navigate('/');
             } else {
                 showToast(data.error || 'Failed to login', 'error');
@@ -57,16 +68,16 @@ const Login = () => {
         reader.onload = async (event) => {
             try {
                 const passkeyData = JSON.parse(event.target.result);
-                if (!passkeyData.firstName || !passkeyData.lastName || !passkeyData.token) {
+                if (!passkeyData.name || !passkeyData.token || !passkeyData.devicePublicKey || !passkeyData.signature) {
                     showToast('Invalid passkey file format.', 'error');
                     return;
                 }
                 setLoading(true);
-                const response = await mockApi.loginWithPasskey(passkeyData.firstName, passkeyData.lastName, passkeyData.token);
+                const response = await mockApi.loginWithPasskey(passkeyData);
                 const data = await response.json();
                 if (response.ok) {
-                    login(data.user, data.token);
-                    showToast(`Welcome back, ${data.user.firstName}! (Passkey Sign-In)`, 'success');
+                    login(data.user, data.token, true);
+                    showToast(`Welcome back, ${data.user.name}! (Passkey Sign-In)`, 'success');
                     navigate('/');
                 } else {
                     showToast(data.error || 'Passkey authentication failed', 'error');
@@ -94,38 +105,27 @@ const Login = () => {
                 <p className="auth-subtitle">Sign in to SMS to manage your inventory</p>
 
                 <form onSubmit={handleSubmit}>
-                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-                        <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
-                            <label>First Name</label>
-                            <input 
-                                type="text" 
-                                value={firstName} 
-                                onChange={(e) => setFirstName(e.target.value)} 
-                                required 
-                                placeholder="First Name" 
-                            />
-                        </div>
-                        <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
-                            <label>Last Name</label>
-                            <input 
-                                type="text" 
-                                value={lastName} 
-                                onChange={(e) => setLastName(e.target.value)} 
-                                required 
-                                placeholder="Last Name" 
-                            />
-                        </div>
+                    <div className="form-group">
+                        <label>User Name</label>
+                        <input 
+                            type="text" 
+                            value={name} 
+                            onChange={(e) => setName(e.target.value)} 
+                            required 
+                            placeholder="User Name" 
+                        />
                     </div>
 
                     <div className="form-group">
                         <label>Password</label>
-                        <div style={{ position: 'relative' }}>
+                        <div style={{ position: 'relative', marginBottom: '1.25rem' }}>
                             <input 
                                 type={showPassword ? "text" : "password"} 
                                 value={password} 
                                 onChange={(e) => setPassword(e.target.value)} 
                                 required 
                                 placeholder="••••••••" 
+                                style={{ marginBottom: 0 }}
                             />
                             <button 
                                 type="button" 
@@ -182,7 +182,21 @@ const Login = () => {
                 </form>
 
                 <p className="auth-footer" style={{ marginBottom: '0.5rem', marginTop: '1.5rem' }}>
-                    <Link to="/forgot-password">Forgot Password?</Link>
+                    <button 
+                        type="button" 
+                        onClick={triggerPasskeyUpload}
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--primary-color)',
+                            fontWeight: '600',
+                            padding: 0,
+                            boxShadow: 'none',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Sign in with Passkey file
+                    </button>
                 </p>
                 {hasAdmin ? (
                     <p className="auth-footer" style={{ marginTop: 0 }}>
