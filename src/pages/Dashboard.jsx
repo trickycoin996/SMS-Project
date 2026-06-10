@@ -331,8 +331,8 @@ const Dashboard = () => {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {analytics.topItems.map((item) => (
-                                            <tr key={item.id}>
+                                        {analytics.topItems.map((item, idx) => (
+                                            <tr key={`${item.id}-${idx}`}>
                                                 <td className="font-medium">{item.name}</td>
                                                 <td>{item.total_quantity}</td>
                                             </tr>

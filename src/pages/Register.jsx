@@ -2,7 +2,10 @@ import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ToastContext } from '../context/ToastContext';
 import { mockApi } from '../services/mockApi';
+import { savePasskeyFile } from '../utils/passkeyFile';
 import './Auth.css';
+
+const ALLOWED_CURRENCIES = ['LKR', 'USD', 'EUR', 'GBP'];
 
 const Register = () => {
     const [formData, setFormData] = useState({
@@ -33,50 +36,6 @@ const Register = () => {
 
     const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
-    const savePasskeyFile = async (passkeyObj) => {
-        const fileContent = JSON.stringify(passkeyObj, null, 2);
-        
-        if (window.showSaveFilePicker) {
-            try {
-                const handle = await window.showSaveFilePicker({
-                    suggestedName: `passkey_${passkeyObj.name.toLowerCase().replace(/\s+/g, '_')}.json`,
-                    types: [{
-                        description: 'JSON Files',
-                        accept: {
-                            'application/json': ['.json'],
-                        },
-                    }],
-                });
-                const writable = await handle.createWritable();
-                await writable.write(fileContent);
-                await writable.close();
-                return true;
-            } catch (err) {
-                console.error('File System Access API failed or cancelled:', err);
-                if (err.name === 'AbortError') {
-                    showToast('Passkey save was cancelled. Fallback download triggered.', 'warning');
-                }
-            }
-        }
-        
-        // Standard download fallback
-        try {
-            const blob = new Blob([fileContent], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `passkey_${passkeyObj.name.toLowerCase().replace(/\s+/g, '_')}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            return true;
-        } catch (fallbackErr) {
-            console.error('Fallback download failed:', fallbackErr);
-            return false;
-        }
-    };
-
     const handleSubmit = async (e) => {
         e.preventDefault();
         const trimmedName = formData.name.trim();
@@ -90,6 +49,10 @@ const Register = () => {
             showToast('Input values are too long (maximum 100 characters).', 'error');
             return;
         }
+        if (!ALLOWED_CURRENCIES.includes(formData.currency_code)) {
+            showToast('Please select a valid currency.', 'error');
+            return;
+        }
 
         setLoading(true);
         try {
@@ -100,10 +63,17 @@ const Register = () => {
             });
             const data = await response.json();
             if (response.ok) {
-                // Save passkey using file system picker
-                const saved = await savePasskeyFile(data.passkey);
+                if (!data.passkey) {
+                    showToast('Account created but passkey generation failed. Contact support.', 'error');
+                    return;
+                }
+                const saved = await savePasskeyFile(data.passkey, { showToast });
+                if (!saved) {
+                    showToast('Account created but passkey file could not be saved. Try registering again.', 'error');
+                    return;
+                }
                 setSuccess(true);
-                showToast('Admin account successfully created!', 'success');
+                showToast('Account created! Passkey downloaded — check your Downloads folder.', 'success');
                 setTimeout(() => navigate('/login'), 2500);
             } else {
                 showToast(data.error || 'Registration failed', 'error');
@@ -142,7 +112,7 @@ const Register = () => {
             <div className="auth-container">
                 <div className="glass-panel auth-card success-card">
                     <h2>Account Created!</h2>
-                    <p>Your cryptographic passkey file has been generated and saved.</p>
+                    <p>Your passkey file was downloaded to your Downloads folder and saved on this device.</p>
                     <p>Redirecting to login...</p>
                 </div>
             </div>
