@@ -74,11 +74,20 @@ const Profile = () => {
 
     const handleCreateEmployee = async (e) => {
         e.preventDefault();
-        const res = await mockApi.addEmployee(employeeData);
+        const trimmedName = employeeData.name.trim();
+        if (!trimmedName || !employeeData.password.trim()) {
+            showToast('Name and password are required.', 'error');
+            return;
+        }
+        if (trimmedName.length > 100) {
+            showToast('Name is too long (maximum 100 characters).', 'error');
+            return;
+        }
+        const res = await mockApi.addEmployee({ ...employeeData, name: trimmedName });
         const data = await res.json();
         if (res.ok) {
             showToast('Employee created successfully!', 'success');
-            setEmployeeData({ firstName: '', lastName: '', password: '', allowedPages: [] });
+            setEmployeeData({ name: '', password: '', allowedPages: [] });
             fetchEmployees();
         } else {
             showToast(`Error: ${data.error}`, 'error');
@@ -98,11 +107,20 @@ const Profile = () => {
 
     const handleResetEmployeePasswordSubmit = async (e) => {
         e.preventDefault();
-        if (!newEmployeePassword) {
+        if (!isPasskeyAuthenticated) {
+            showToast('Sign in with your installation passkey to reset employee passwords.', 'error');
+            return;
+        }
+        const trimmedPassword = newEmployeePassword.trim();
+        if (!trimmedPassword) {
             showToast('Please enter a valid password', 'error');
             return;
         }
-        const res = await mockApi.resetEmployeePassword(resettingEmployeeId, newEmployeePassword);
+        if (trimmedPassword.length > 100) {
+            showToast('Password is too long (maximum 100 characters).', 'error');
+            return;
+        }
+        const res = await mockApi.resetEmployeePassword(resettingEmployeeId, trimmedPassword);
         const data = await res.json();
         if (res.ok) {
             showToast(data.message, 'success');
@@ -110,25 +128,6 @@ const Profile = () => {
             setNewEmployeePassword('');
         } else {
             showToast(data.error || 'Failed to reset password', 'error');
-        }
-    };
-
-    const handleGenerateEmployeePasskey = async (id) => {
-        const res = await mockApi.generatePasskey(id);
-        const data = await res.json();
-        if (res.ok) {
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `passkey_${data.firstName.toLowerCase()}_${data.lastName.toLowerCase()}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            showToast(`Passkey file downloaded for ${data.firstName} ${data.lastName}`, 'success');
-        } else {
-            showToast(data.error || 'Failed to generate passkey', 'error');
         }
     };
 
@@ -158,15 +157,24 @@ const Profile = () => {
     
     const handleSaveUserInfo = async (e) => {
         e.preventDefault();
-        // Since login is based on firstName + lastName, we update user store info
+        const trimmedName = userInfo.name.trim();
+        if (!trimmedName) {
+            showToast('Name is required.', 'error');
+            return;
+        }
+        if (trimmedName.length > 100) {
+            showToast('Name is too long (maximum 100 characters).', 'error');
+            return;
+        }
         const savedUsers = await idbStore.get('sms_users') || [];
         const index = savedUsers.findIndex(u => u.id === user.id);
         if (index > -1) {
-            savedUsers[index].firstName = userInfo.firstName;
-            savedUsers[index].lastName = userInfo.lastName;
+            savedUsers[index].name = trimmedName;
+            delete savedUsers[index].firstName;
+            delete savedUsers[index].lastName;
             savedUsers[index].email = userInfo.email;
             await idbStore.set('sms_users', savedUsers);
-            showToast('User info updated. Please sign in again if name changes take effect.', 'success');
+            showToast('User info updated. Please sign in again if your name changed.', 'success');
         } else {
             showToast('Failed to save profile details', 'error');
         }
@@ -225,6 +233,10 @@ const Profile = () => {
     };
 
     const handleDownloadBackup = async () => {
+        if (!isPasskeyAuthenticated) {
+            showToast('Database backup requires admin passkey sign-in.', 'error');
+            return;
+        }
         const backupData = {};
         const keys = await idbStore.keys();
         for (const key of keys) {
@@ -246,6 +258,10 @@ const Profile = () => {
     };
 
     const handleDownloadBackupPdf = async () => {
+        if (!isPasskeyAuthenticated) {
+            showToast('Database backup requires admin passkey sign-in.', 'error');
+            return;
+        }
         const doc = new jsPDF();
         doc.setFontSize(20);
         doc.text('System Backup Report', 14, 22);
@@ -289,9 +305,14 @@ const Profile = () => {
         };
 
         const products = await idbStore.get('sms_products') || [];
-        const invoices = await idbStore.get('sms_invoices') || [];
-        const expenses = await idbStore.get('sms_expenses') || [];
-        const transactions = await idbStore.get('sms_transactions') || [];
+        const [invRes, expRes, transRes] = await Promise.all([
+            mockApi.getInvoices(),
+            mockApi.getExpenses(),
+            mockApi.getTransactions()
+        ]);
+        const invoices = invRes.ok ? (await invRes.json()).invoices || [] : [];
+        const expenses = expRes.ok ? (await expRes.json()).expenses || [] : [];
+        const transactions = transRes.ok ? (await transRes.json()).transactions || [] : [];
 
         addSection('Products Backup', products);
         addSection('Invoices Backup', invoices);
@@ -304,6 +325,10 @@ const Profile = () => {
     };
 
     const handleBackupUpload = (e) => {
+        if (!isPasskeyAuthenticated) {
+            showToast('Database restore requires admin passkey sign-in.', 'error');
+            return;
+        }
         const file = e.target.files[0];
         if (!file) return;
 
@@ -327,6 +352,10 @@ const Profile = () => {
     };
 
     const handleRestoreConfirm = async () => {
+        if (!isPasskeyAuthenticated) {
+            showToast('Database restore requires admin passkey sign-in.', 'error');
+            return;
+        }
         if (!backupContent) return;
         if (window.confirm('Are you absolutely sure you want to restore this backup? This will completely replace your current database.')) {
             const res = await mockApi.restoreBackup(backupContent);
@@ -375,6 +404,23 @@ const Profile = () => {
 
     const filteredBackup = getFilteredBackupDetails();
 
+    const passkeyLockBanner = !isPasskeyAuthenticated && (
+        <div style={{
+            padding: '1rem',
+            borderRadius: '0.5rem',
+            backgroundColor: '#fef3c7',
+            border: '1px solid #f59e0b',
+            color: '#92400e',
+            marginBottom: '1.5rem',
+            fontSize: '0.9rem'
+        }}>
+            <strong><i className="fas fa-lock" style={{ marginRight: '0.5rem' }}></i>Passkey authentication required</strong>
+            <p style={{ margin: '0.5rem 0 0', lineHeight: 1.5 }}>
+                You signed in with a password. High-security admin operations — database backup, restore, search in backup, and employee password resets — require your <strong>installation passkey</strong> (the file saved when you first created the admin account). Sign out and use <strong>Sign in with admin passkey file</strong> on the login page.
+            </p>
+        </div>
+    );
+
     return (
         <div style={{padding: '2rem'}}>
             <h2 style={{marginBottom: '2rem'}}>Profile & Settings</h2>
@@ -399,15 +445,9 @@ const Profile = () => {
                                 <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>User ID</label>
                                 <input type="text" name="userId" value={userInfo.userId} disabled style={{ backgroundColor: '#e5e7eb', cursor: 'not-allowed', color: '#6b7280' }} />
                             </div>
-                            <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
-                                <div style={{flex: 1}}>
-                                    <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>First Name</label>
-                                    <input type="text" name="firstName" value={userInfo.firstName} onChange={handleUserInfoChange} required />
-                                </div>
-                                <div style={{flex: 1}}>
-                                    <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Last Name</label>
-                                    <input type="text" name="lastName" value={userInfo.lastName} onChange={handleUserInfoChange} required />
-                                </div>
+                            <div style={{marginBottom: '1rem'}}>
+                                <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Name</label>
+                                <input type="text" name="name" value={userInfo.name} onChange={handleUserInfoChange} required placeholder="Full Name" />
                             </div>
                             <div style={{marginBottom: '1.5rem'}}>
                                 <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Email Address</label>
@@ -505,12 +545,13 @@ const Profile = () => {
 
             {activeTab === 'backup' && user?.role === 'admin' && (
                 <div>
-                    <div className="glass-panel" style={{maxWidth: '700px', marginBottom: '2rem'}}>
+                    {passkeyLockBanner}
+                    <div className="glass-panel" style={{maxWidth: '700px', marginBottom: '2rem', opacity: isPasskeyAuthenticated ? 1 : 0.6}}>
                         <h3 style={{marginBottom: '1rem'}}>Backup Data</h3>
                         <p style={{marginBottom: '1rem', fontSize: '0.9rem', color: 'var(--text-muted)'}}>Download a complete backup of all system data (Products, Invoices, Expenses, Transactions).</p>
                         <div style={{ display: 'flex', gap: '1rem' }}>
-                            <button onClick={handleDownloadBackup} style={{backgroundColor: 'var(--primary-color)'}}>Download (.json)</button>
-                            <button onClick={handleDownloadBackupPdf} style={{backgroundColor: '#e74c3c'}}>Download (.pdf)</button>
+                            <button onClick={handleDownloadBackup} disabled={!isPasskeyAuthenticated} style={{backgroundColor: 'var(--primary-color)'}}>Download (.json)</button>
+                            <button onClick={handleDownloadBackupPdf} disabled={!isPasskeyAuthenticated} style={{backgroundColor: '#e74c3c'}}>Download (.pdf)</button>
                         </div>
                     </div>
 
@@ -520,7 +561,7 @@ const Profile = () => {
                         <button onClick={handleDownloadLogs} style={{backgroundColor: 'var(--secondary-color)'}}>Download Logs (.txt)</button>
                     </div>
 
-                    <div className="glass-panel" style={{maxWidth: '700px'}}>
+                    <div className="glass-panel" style={{maxWidth: '700px', opacity: isPasskeyAuthenticated ? 1 : 0.6}}>
                         <h3 style={{marginBottom: '1rem'}}>Restore Database Backup</h3>
                         <p style={{marginBottom: '1rem', fontSize: '0.9rem', color: 'var(--text-muted)'}}>Upload a JSON backup file to inspect its contents and restore it to the system.</p>
                         
@@ -528,12 +569,13 @@ const Profile = () => {
                             <input 
                                 type="file" 
                                 accept=".json" 
-                                onChange={handleBackupUpload} 
+                                onChange={handleBackupUpload}
+                                disabled={!isPasskeyAuthenticated}
                                 style={{ display: 'block', marginBottom: '1rem' }} 
                             />
                         </div>
 
-                        {backupContent && (
+                        {backupContent && isPasskeyAuthenticated && (
                             <div style={{ border: '1px solid var(--border-color)', borderRadius: '0.5rem', padding: '1rem', background: 'var(--background-color)', marginBottom: '1rem' }}>
                                 <h4 style={{ marginBottom: '0.5rem' }}>Backup File Inspection</h4>
                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
@@ -592,15 +634,9 @@ const Profile = () => {
                     <div className="glass-panel" style={{maxWidth: '700px', marginBottom: '2rem'}}>
                         <h3 style={{marginBottom: '1rem'}}>Create Employee Account</h3>
                         <form onSubmit={handleCreateEmployee}>
-                            <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
-                                <div style={{flex: 1}}>
-                                    <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>First Name</label>
-                                    <input type="text" value={employeeData.firstName} onChange={(e) => setEmployeeData({...employeeData, firstName: e.target.value})} required />
-                                </div>
-                                <div style={{flex: 1}}>
-                                    <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Last Name</label>
-                                    <input type="text" value={employeeData.lastName} onChange={(e) => setEmployeeData({...employeeData, lastName: e.target.value})} required />
-                                </div>
+                            <div style={{marginBottom: '1rem'}}>
+                                <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Name</label>
+                                <input type="text" value={employeeData.name} onChange={(e) => setEmployeeData({...employeeData, name: e.target.value})} required placeholder="Full Name" />
                             </div>
                             <div className="form-group">
                                 <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Initial Password</label>
@@ -609,15 +645,24 @@ const Profile = () => {
 
                             <div style={{marginBottom: '1.5rem'}}>
                                 <label style={{display:'block', marginBottom:'0.5rem', fontWeight:'500'}}>Access Permissions</label>
-                                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem'}}>
+                                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem'}}>
                                     {pagesList.map(page => (
-                                        <label key={page} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', textTransform: 'capitalize', cursor: 'pointer'}}>
+                                        <label key={page} style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            minHeight: '2rem',
+                                            textTransform: 'capitalize',
+                                            cursor: 'pointer',
+                                            margin: 0
+                                        }}>
                                             <input 
                                                 type="checkbox" 
                                                 checked={employeeData.allowedPages.includes(page)}
                                                 onChange={() => handleEmployeePageToggle(page)}
+                                                style={{ width: '1rem', height: '1rem', margin: 0, flexShrink: 0, cursor: 'pointer' }}
                                             />
-                                            {page}
+                                            <span style={{ lineHeight: 1.2 }}>{page}</span>
                                         </label>
                                     ))}
                                 </div>
@@ -645,7 +690,7 @@ const Profile = () => {
                                 ) : (
                                     employees.map(emp => (
                                         <tr key={emp.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                            <td style={{ padding: '0.75rem', fontWeight: '500' }}>{emp.firstName} {emp.lastName}</td>
+                                            <td style={{ padding: '0.75rem', fontWeight: '500' }}>{emp.name}</td>
                                             <td style={{ padding: '0.75rem' }}>
                                                 <span style={{
                                                     padding: '0.25rem 0.5rem',
@@ -663,15 +708,10 @@ const Profile = () => {
                                             </td>
                                             <td style={{ padding: '0.75rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                                                 <button 
-                                                    onClick={() => handleGenerateEmployeePasskey(emp.id)}
-                                                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', backgroundColor: 'var(--secondary-color, #10b981)', color: 'white' }}
-                                                    title="Download Passkey JSON file"
-                                                >
-                                                    <i className="fas fa-key"></i> Key
-                                                </button>
-                                                <button 
-                                                    onClick={() => setResettingEmployeeId(emp.id)}
-                                                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', backgroundColor: '#f59e0b', color: 'white' }}
+                                                    onClick={() => isPasskeyAuthenticated ? setResettingEmployeeId(emp.id) : showToast('Sign in with your installation passkey to reset employee passwords.', 'error')}
+                                                    disabled={!isPasskeyAuthenticated}
+                                                    title={!isPasskeyAuthenticated ? 'Requires admin passkey sign-in' : 'Reset employee password'}
+                                                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', backgroundColor: '#f59e0b', color: 'white', opacity: isPasskeyAuthenticated ? 1 : 0.5, cursor: isPasskeyAuthenticated ? 'pointer' : 'not-allowed' }}
                                                 >
                                                     Reset Password
                                                 </button>
@@ -697,7 +737,7 @@ const Profile = () => {
             )}
 
             {/* inline popup form for resetting employee password */}
-            {resettingEmployeeId && (
+            {resettingEmployeeId && isPasskeyAuthenticated && (
                 <div style={{
                     position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
                     backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000

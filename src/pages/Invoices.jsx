@@ -4,11 +4,12 @@ import { AuthContext } from '../context/AuthContext';
 import { ToastContext } from '../context/ToastContext';
 import { idbStore } from '../utils/db';
 import { mockApi } from '../services/mockApi';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import { isValidEmail, validateRequiredString, validateOptionalString, validatePositiveNumber } from '../utils/validation';
+import { buildInvoicePdf } from '../utils/invoicePdf';
+import { printPdfDocument } from '../utils/pdfPrint';
 import './Products.css';
 
-const emptyItem = { product_id: '', description: '', quantity: 1, unit_price: 0 }; // emptyItem: template for a new invoice line
+const getEmptyItem = () => ({ product_id: '', product_name: '', description: '', quantity: 1, unit_price: 0 });
 
 const Invoices = () => {
     const { token, formatCurrency, storeInfo } = useContext(AuthContext); // token: JWT used for authenticated API calls
@@ -26,7 +27,7 @@ const Invoices = () => {
         issue_date: '', // issue_date: invoice creation date
         due_date: '', // due_date: payment deadline
         notes: '', // notes: optional remarks shown on invoice
-        items: [emptyItem] // items: array of invoice line items
+        items: [getEmptyItem()] // items: array of invoice line items
     });
 
     const fetchInvoicesAndProducts = async () => {
@@ -64,13 +65,24 @@ const Invoices = () => {
     };
 
     const handleItemChange = (index, field, value) => {
-        const updated = [...formData.items]; // updated: copy of existing line items
-        updated[index] = { ...updated[index], [field]: value }; // modify targeted line with new field value
+        const updated = [...formData.items];
+        if (field === 'product_id') {
+            const product = products.find((p) => String(p.id) === String(value));
+            updated[index] = {
+                ...updated[index],
+                product_id: value,
+                product_name: product?.name || '',
+                description: product?.name || updated[index].description,
+                unit_price: product ? product.price : updated[index].unit_price
+            };
+        } else {
+            updated[index] = { ...updated[index], [field]: value };
+        }
         setFormData({ ...formData, items: updated });
     };
 
     const addItemRow = () => {
-        setFormData({ ...formData, items: [...formData.items, emptyItem] }); // append a fresh empty line item
+        setFormData({ ...formData, items: [...formData.items, getEmptyItem()] }); // append a fresh empty line item
     };
 
     const removeItemRow = (index) => {
@@ -88,10 +100,61 @@ const Invoices = () => {
         return { subtotal, total: subtotal }; // currently no tax logic, so total equals subtotal
     };
 
+    // Recalculate totals whenever form items change
+    const totals = calculateTotals();
+
+    const validateInvoiceForm = () => {
+        const checks = [
+            validateRequiredString(formData.customer_name, 'Customer name'),
+            formData.customer_email && !isValidEmail(formData.customer_email)
+                ? 'Customer email format is invalid.'
+                : validateOptionalString(formData.customer_email, 'Customer email'),
+            !formData.issue_date ? 'Issue date is required.' : null,
+            !formData.due_date ? 'Due date is required.' : null,
+            formData.issue_date && formData.due_date && formData.due_date < formData.issue_date
+                ? 'Due date cannot be before issue date.'
+                : null,
+            validateOptionalString(formData.notes, 'Notes')
+        ];
+
+        for (let i = 0; i < formData.items.length; i++) {
+            const item = formData.items[i];
+            const line = i + 1;
+            const qtyError = validatePositiveNumber(item.quantity, `Line ${line} quantity`);
+            const priceError = validatePositiveNumber(item.unit_price, `Line ${line} unit price`, { allowZero: true });
+            const descError = validateOptionalString(item.description, `Line ${line} description`);
+            if (qtyError || priceError || descError) {
+                checks.push(qtyError || priceError || descError);
+                break;
+            }
+        }
+
+        return checks.find(Boolean) || null;
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
+        const validationError = validateInvoiceForm();
+        if (validationError) {
+            showToast(validationError, 'error');
+            return;
+        }
         try {
-            const response = await mockApi.createInvoice(formData);
+            const response = await mockApi.createInvoice({
+                ...formData,
+                customer_name: formData.customer_name.trim(),
+                customer_email: formData.customer_email.trim(),
+                notes: formData.notes.trim(),
+                total: totals.total,
+                items: formData.items.map(item => {
+                    const product = products.find((p) => String(p.id) === String(item.product_id));
+                    return {
+                        ...item,
+                        product_name: (item.product_name || product?.name || item.description || '').trim(),
+                        description: (item.description || product?.name || '').trim()
+                    };
+                })
+            });
 
             const data = await response.json();
             if (!response.ok) {
@@ -106,7 +169,7 @@ const Invoices = () => {
                 issue_date: '',
                 due_date: '',
                 notes: '',
-                items: [emptyItem]
+                items: [getEmptyItem()]
             });
             showToast('Invoice created successfully!', 'success');
             fetchInvoicesAndProducts();
@@ -132,87 +195,19 @@ const Invoices = () => {
         }
     };
 
-    const downloadPdf = async (inv) => {
-        const doc = new jsPDF();
-        const settings = await idbStore.get('sms_letterhead') || {};
-        const companyName = settings.companyName || 'Store Management System';
-        const phone = settings.phone || '';
-        const email = settings.email || '';
-        const addr1 = settings.addressLine1 || '';
-        const addr2 = settings.addressLine2 || '';
+    const printInvoicePdf = async (inv) => {
+        if (!inv) return;
 
-        // Add Header
-        doc.setFontSize(22);
-        doc.setTextColor(settings.primaryColor || '#f13c3c');
-        doc.text(companyName, 14, 22);
-
-        doc.setFontSize(10);
-        doc.setTextColor('#333333');
-        if (addr1) doc.text(addr1, 14, 30);
-        if (addr2) doc.text(addr2, 14, 35);
-        if (phone) doc.text(`Phone: ${phone}`, 14, 40);
-        if (email) doc.text(`Email: ${email}`, 14, 45);
-
-        // Fetch currency settings
-        const symbols = {
-            USD: '$',
-            EUR: '€',
-            GBP: '£',
-            LKR: 'Rs'
-        };
-        const currencySymbol = symbols[storeInfo?.currency] || '$';
-
-        // Invoice Info
-        doc.setFontSize(16);
-        doc.setTextColor('#000000');
-        doc.text('INVOICE', 140, 22);
-        doc.setFontSize(10);
-        doc.text(`Invoice Number: ${inv.invoice_number}`, 140, 30);
-        doc.text(`Date: ${inv.issue_date?.slice(0, 10)}`, 140, 35);
-        doc.text(`Due Date: ${inv.due_date?.slice(0, 10)}`, 140, 40);
-        doc.text(`Currency: ${storeInfo?.currency || 'USD'} (${currencySymbol})`, 140, 45);
-        doc.text(`Status: ${inv.status}`, 140, 50);
-
-        // Bill to
-        doc.setFontSize(12);
-        doc.text('Bill To:', 14, 60);
-        doc.setFontSize(10);
-        doc.text(inv.customer_name || 'Valued Customer', 14, 66);
-        if (inv.customer_email) doc.text(inv.customer_email, 14, 71);
-
-        // Table
-        const tableColumn = ["Description", "Qty", "Unit Price", "Line Total"];
-        const tableRows = [];
-
-        inv.items.forEach(item => {
-            const description = item.description || 'Item';
-            const qty = item.quantity;
-            const price = Number(item.unit_price).toFixed(2);
-            const lineTotal = (Number(item.quantity) * Number(item.unit_price)).toFixed(2);
-            tableRows.push([description, qty, `${currencySymbol}${price}`, `${currencySymbol}${lineTotal}`]);
-        });
-
-        doc.autoTable({
-            startY: 85,
-            head: [tableColumn],
-            body: tableRows,
-            theme: 'striped',
-            headStyles: { fillColor: settings.primaryColor || '#f13c3c' }
-        });
-
-        // Totals
-        const finalY = doc.lastAutoTable.finalY || 85;
-        doc.setFontSize(12);
-        doc.text(`Total Amount: ${currencySymbol}${Number(inv.total || 0).toFixed(2)}`, 140, finalY + 10);
-
-        if (inv.notes) {
-            doc.setFontSize(10);
-            doc.text(`Notes: ${inv.notes}`, 14, finalY + 10);
+        try {
+            const letterhead = await idbStore.get('sms_letterhead') || {};
+            const doc = buildInvoicePdf(inv, { storeInfo, letterhead });
+            await printPdfDocument(doc);
+            mockApi.logAction('PRINT_INVOICE_PDF', `Opened print dialog for invoice ${inv.invoice_number}`);
+            showToast('Print dialog opened. If nothing appeared, allow pop-ups for this site.', 'success');
+        } catch (err) {
+            console.error('Print failed:', err);
+            showToast(err.message || 'Failed to print invoice. Allow pop-ups and try again.', 'error');
         }
-
-        mockApi.logAction('DOWNLOAD_INVOICE_PDF', `Downloaded PDF for invoice ${inv.invoice_number}`);
-        doc.save(`${inv.invoice_number}.pdf`);
-        showToast('Invoice PDF downloaded successfully!', 'success');
     };
 
     if (loading) return <div className="loading-state">Loading invoices...</div>;
@@ -222,8 +217,6 @@ const Invoices = () => {
         const matchStatus = statusFilter === 'All' ? true : inv.status === statusFilter;
         return matchSearch && matchStatus;
     });
-
-    const totals = calculateTotals();
 
     return (
         <div className="products-container">
@@ -498,9 +491,9 @@ const Invoices = () => {
                                             <button
                                                 type="button"
                                                 className="btn-small"
-                                                onClick={() => downloadPdf(inv)}
+                                                onClick={() => printInvoicePdf(inv)}
                                             >
-                                                PDF
+                                                Print
                                             </button>
                                         </td>
                                     </tr>

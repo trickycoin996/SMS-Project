@@ -2,6 +2,7 @@ import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { ToastContext } from '../context/ToastContext';
 import { mockApi } from '../services/mockApi';
+import { validateRequiredString, validateOptionalString } from '../utils/validation';
 import './Products.css';
 
 const Categories = () => {
@@ -40,8 +41,17 @@ const Categories = () => {
 
     const handleAddCategory = async (e) => {
         e.preventDefault();
+        const validationError = validateRequiredString(formData.name, 'Category name')
+            || validateOptionalString(formData.description, 'Description');
+        if (validationError) {
+            showToast(validationError, 'error');
+            return;
+        }
         try {
-            const res = await mockApi.addCategory(formData);
+            const res = await mockApi.addCategory({
+                name: formData.name.trim(),
+                description: formData.description.trim()
+            });
 
             if (res.ok) {
                 setFormData({ name: '', description: '' });

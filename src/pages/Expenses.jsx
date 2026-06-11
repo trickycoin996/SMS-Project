@@ -3,7 +3,10 @@ import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { ToastContext } from '../context/ToastContext';
 import { mockApi } from '../services/mockApi';
+import { validateRequiredString, validateOptionalString, validatePositiveNumber } from '../utils/validation';
 import './Products.css';
+
+const EXPENSE_CATEGORIES = ['Rent', 'Utilities', 'Supplies', 'Marketing', 'Travel', 'Other'];
 
 const Expenses = () => {
     const { token, formatCurrency } = useContext(AuthContext); // token: JWT for authenticating API calls
@@ -45,10 +48,31 @@ const Expenses = () => {
         setFormData({ ...formData, [e.target.name]: e.target.value }); // update relevant field in expense form state
     };
 
+    const validateExpenseForm = () => {
+        const checks = [
+            !formData.date ? 'Date is required.' : null,
+            validatePositiveNumber(formData.amount, 'Amount'),
+            !formData.category ? 'Category is required.' : null,
+            formData.category && !EXPENSE_CATEGORIES.includes(formData.category) ? 'Invalid expense category.' : null,
+            validateOptionalString(formData.vendor, 'Vendor'),
+            validateOptionalString(formData.description, 'Description')
+        ];
+        return checks.find(Boolean) || null;
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
+        const validationError = validateExpenseForm();
+        if (validationError) {
+            showToast(validationError, 'error');
+            return;
+        }
         try {
-            const res = await mockApi.addExpense(formData);
+            const res = await mockApi.addExpense({
+                ...formData,
+                vendor: formData.vendor.trim(),
+                description: formData.description.trim()
+            });
             const data = await res.json();
             if (!res.ok) {
                 showToast(data.error || 'Failed to log expense', 'error');

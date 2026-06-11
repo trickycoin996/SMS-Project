@@ -1,5 +1,5 @@
 import React, { useContext } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, AuthContext } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import Layout from './components/Layout';
@@ -7,7 +7,6 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import ForgotPassword from './pages/ForgotPassword';
 import Products from './pages/Products';
 import Categories from './pages/Categories';
 import Invoices from './pages/Invoices';
@@ -51,7 +50,7 @@ const AppRoutes = () => {
                 {/* Public Routes */}
                 <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
                 <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
-                <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
+                <Route path="/forgot-password" element={<Navigate to="/login" replace />} />
 
                 {/* Protected Routes (Wrapped in Layout) */}
                 <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>

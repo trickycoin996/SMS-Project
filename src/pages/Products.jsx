@@ -2,6 +2,7 @@ import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { ToastContext } from '../context/ToastContext';
 import { mockApi } from '../services/mockApi';
+import { validateRequiredString, validatePositiveNumber } from '../utils/validation';
 import './Products.css';
 
 const Products = () => {
@@ -48,10 +49,30 @@ const Products = () => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
     };
 
+    const validateProductForm = () => {
+        const checks = [
+            validateRequiredString(formData.name, 'Product name'),
+            validateRequiredString(formData.sku, 'SKU'),
+            !formData.category_id ? 'Category is required.' : null,
+            validatePositiveNumber(formData.price, 'Price'),
+            formData.quantity !== '' ? validatePositiveNumber(formData.quantity, 'Quantity', { required: false, allowZero: true }) : null
+        ];
+        return checks.find(Boolean) || null;
+    };
+
     const handleAddProduct = async (e) => {
         e.preventDefault();
+        const validationError = validateProductForm();
+        if (validationError) {
+            showToast(validationError, 'error');
+            return;
+        }
         try {
-            const res = await mockApi.addProduct(formData);
+            const res = await mockApi.addProduct({
+                ...formData,
+                name: formData.name.trim(),
+                sku: formData.sku.trim()
+            });
             if (res.ok) {
                 setFormData({ name: '', sku: '', category_id: '', price: '', quantity: '' });
                 setShowAddForm(false);
@@ -89,7 +110,14 @@ const Products = () => {
 
     const executeTransaction = async (productId, type) => {
         const qty = Number(transactionQuantities[productId]) || 0;
-        if (qty <= 0) return;
+        if (qty <= 0) {
+            showToast('Enter a quantity greater than 0.', 'error');
+            return;
+        }
+        if (!Number.isInteger(qty)) {
+            showToast('Quantity must be a whole number.', 'error');
+            return;
+        }
 
         await handleTransaction(productId, type, qty);
         // Reset the input field for that product after success

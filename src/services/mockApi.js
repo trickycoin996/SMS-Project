@@ -32,6 +32,68 @@ export const hashPassword = async (password, salt) => {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
+const P256_SIG_SIZE = 32;
+
+const hexToBytes = (hex) => {
+    const clean = String(hex).replace(/\s/g, '');
+    const pairs = clean.match(/.{1,2}/g) || [];
+    return new Uint8Array(pairs.map((byte) => parseInt(byte, 16)));
+};
+
+const padToP256Component = (bytes) => {
+    let start = 0;
+    while (start < bytes.length - 1 && bytes[start] === 0) start += 1;
+    const trimmed = bytes.slice(start);
+    if (trimmed.length > P256_SIG_SIZE) return trimmed.slice(trimmed.length - P256_SIG_SIZE);
+    const padded = new Uint8Array(P256_SIG_SIZE);
+    padded.set(trimmed, P256_SIG_SIZE - trimmed.length);
+    return padded;
+};
+
+const normalizeEcdsaP256Signature = (sigBytes) => {
+    if (sigBytes.length === P256_SIG_SIZE * 2) return sigBytes;
+    if (sigBytes[0] === 0x30) {
+        let offset = 2;
+        if (sigBytes[1] & 0x80) offset = 2 + (sigBytes[1] & 0x7f);
+        offset += 1;
+        const rLen = sigBytes[offset++];
+        const r = sigBytes.slice(offset, offset + rLen);
+        offset += rLen;
+        offset += 1;
+        const sLen = sigBytes[offset++];
+        const s = sigBytes.slice(offset, offset + sLen);
+        const normalized = new Uint8Array(P256_SIG_SIZE * 2);
+        normalized.set(padToP256Component(r), 0);
+        normalized.set(padToP256Component(s), P256_SIG_SIZE);
+        return normalized;
+    }
+    return sigBytes;
+};
+
+const ensureDeviceKeyPair = async () => {
+    if ((await idbStore.get('sms_device_private_key')) !== undefined) return true;
+    try {
+        const keyPair = await crypto.subtle.generateKey(
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            true,
+            ['sign', 'verify']
+        );
+        const privateKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+        const publicKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+        await idbStore.set('sms_device_private_key', privateKeyJwk);
+        await idbStore.set('sms_device_public_key', publicKeyJwk);
+        await idbStore.set('sms_device_id', 'device_' + Math.random().toString(36).slice(2, 11));
+        return true;
+    } catch (e) {
+        console.error('Failed to generate device keypair:', e);
+        return false;
+    }
+};
+
+const buildPasskeyProof = async (name, token, deviceId) => {
+    return hashPassword(token, `${name}:${deviceId}`);
+};
+
 // ECDSA Key Pair Signatures for Device-Bound Trust
 export const signData = async (dataStr) => {
     try {
@@ -84,8 +146,7 @@ export const verifyData = async (dataStr, signatureHex, publicKeyJwk) => {
         const encoder = new TextEncoder();
         const data = encoder.encode(dataStr);
         
-        const match = signatureHex.match(/.{1,2}/g) || [];
-        const sigBytes = new Uint8Array(match.map(byte => parseInt(byte, 16)));
+        const sigBytes = normalizeEcdsaP256Signature(hexToBytes(signatureHex));
         
         return await crypto.subtle.verify(
             {
@@ -173,26 +234,7 @@ export const initializeDB = async () => {
     await migrateToFifo('sms_expenses', 'sms_expenses_fifo');
     await migrateToFifo('sms_transactions', 'sms_transactions_fifo');
 
-    // Generate Device ECDSA Key Pair for persistent local identity
-    if ((await idbStore.get('sms_device_private_key')) === undefined) {
-        try {
-            const keyPair = await crypto.subtle.generateKey(
-                {
-                    name: "ECDSA",
-                    namedCurve: "P-256"
-                },
-                true,
-                ["sign", "verify"]
-            );
-            const privateKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
-            const publicKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
-            await idbStore.set('sms_device_private_key', privateKeyJwk);
-            await idbStore.set('sms_device_public_key', publicKeyJwk);
-            await idbStore.set('sms_device_id', 'device_' + Math.random().toString(36).slice(2, 11));
-        } catch (e) {
-            console.error('Failed to generate device keypair:', e);
-        }
-    }
+    await ensureDeviceKeyPair();
 
     // Consolidate first/last names to Name, and migrate plain-text passwords
     const users = await getStorage('sms_users', []);
@@ -285,49 +327,68 @@ export const mockApi = {
             return { ok: false, json: async () => ({ error: 'Invalid passkey file structure.' }) };
         }
         const { name, token, devicePublicKey, signature } = passkeyData;
-        if (!name || !token || !devicePublicKey || !signature) {
-            return { ok: false, json: async () => ({ error: 'Missing passkey verification fields.' }) };
+        if (!name || !token) {
+            return { ok: false, json: async () => ({ error: 'Passkey file is missing name or token.' }) };
+        }
+        const hasProofBundle = Boolean(passkeyData.deviceId && passkeyData.proof);
+        const hasSignatureBundle = Boolean(devicePublicKey && signature);
+        if (!hasProofBundle && !hasSignatureBundle) {
+            return { ok: false, json: async () => ({ error: 'Passkey file is missing verification data. Register again to generate a new file.' }) };
         }
         
         const sanitizedName = sanitizeString(name);
-        const sanitizedToken = sanitizeString(token);
+        const trimmedToken = String(token).trim();
+        const signPayload = `${sanitizedName}:${trimmedToken}`;
+        const deviceId = passkeyData.deviceId || '';
         
-        // 1. Verify signature with device key
-        const isValidSignature = await verifyData(sanitizedName + ":" + sanitizedToken, signature, devicePublicKey);
-        if (!isValidSignature) {
+        const isValidSignature = hasSignatureBundle
+            ? await verifyData(signPayload, signature, devicePublicKey)
+            : false;
+        const expectedProof = deviceId ? await buildPasskeyProof(sanitizedName, trimmedToken, deviceId) : null;
+        const isValidProof = Boolean(
+            hasProofBundle && expectedProof && passkeyData.proof === expectedProof
+        );
+
+        if (!isValidSignature && !isValidProof) {
             await mockApi.logAction('LOGIN_FAILED', `Failed passkey verification for ${sanitizedName} (Invalid signature)`);
-            return { ok: false, json: async () => ({ error: 'Invalid passkey cryptographic signature' }) };
+            return { ok: false, json: async () => ({ error: 'Invalid passkey file. The file may be corrupted or was not issued for this installation.' }) };
         }
 
         let users = await getStorage('sms_users', []);
         let user = users.find(u => u.name.trim().toLowerCase() === sanitizedName.toLowerCase());
 
-        // 2. Clean install recovery auto-registration
+        // 2. Clean install recovery — passkey only recreates the admin account
         if (!user) {
             const salt = generateSalt();
             const tempPassword = await hashPassword('password123', salt);
             user = {
                 id: Date.now(),
                 name: sanitizedName,
-                role: users.length === 0 ? 'admin' : 'employee',
+                role: 'admin',
                 status: 'active',
                 salt,
                 password: tempPassword,
-                passkeyToken: sanitizedToken,
+                passkeyToken: trimmedToken,
                 devicePublicKey,
+                passkeyProof: expectedProof,
                 allowedPages: ['dashboard', 'products', 'categories', 'invoices', 'expenses', 'transactions', 'profile']
             };
             users.push(user);
             await setStorage('sms_users', users);
-            await mockApi.logAction('USER_RECONSTRUCTED', `User ${sanitizedName} auto-reconstructed from passkey file during reinstall`);
+            await mockApi.logAction('USER_RECONSTRUCTED', `Admin ${sanitizedName} auto-reconstructed from installation passkey during reinstall`);
+        }
+
+        if (user.role !== 'admin') {
+            await mockApi.logAction('LOGIN_FAILED', `Passkey attempt by non-admin user ${sanitizedName}`);
+            return { ok: false, json: async () => ({ error: 'Passkey sign-in is only available for the admin account. Employees must use password login.' }) };
         }
 
         if (user.status === 'deleted') {
-            await mockApi.logAction('LOGIN_FAILED_DELETED', `Passkey attempt by deleted employee ${sanitizedName}`);
+            await mockApi.logAction('LOGIN_FAILED_DELETED', `Passkey attempt by disabled admin ${sanitizedName}`);
             return { ok: false, json: async () => ({ error: 'Account has been deleted/disabled.' }) };
         }
 
-        if (user.passkeyToken && user.passkeyToken === sanitizedToken) {
+        if (user.passkeyToken && user.passkeyToken === trimmedToken) {
             await mockApi.logAction('LOGIN_SUCCESS', `User ${sanitizedName} logged in via Passkey`);
             return { ok: true, json: async () => ({ 
                 user: { 
@@ -367,9 +428,23 @@ export const mockApi = {
             return { ok: false, json: async () => ({ error: 'A user with this name already exists' }) };
         }
         
+        const keysReady = await ensureDeviceKeyPair();
+        if (!keysReady) {
+            return { ok: false, json: async () => ({ error: 'Could not initialize device cryptography. Use HTTPS or localhost.' }) };
+        }
+
         const salt = generateSalt();
         const hashedPassword = await hashPassword(userData.password, salt);
         const passkeyToken = generateSalt();
+        const devicePublicKey = await idbStore.get('sms_device_public_key');
+        const deviceId = await idbStore.get('sms_device_id') || '';
+        const signPayload = `${trimmedName}:${passkeyToken}`;
+        const signature = await signData(signPayload);
+        const proof = await buildPasskeyProof(trimmedName, passkeyToken, deviceId);
+
+        if (!proof) {
+            return { ok: false, json: async () => ({ error: 'Failed to generate installation passkey. Please try again.' }) };
+        }
 
         const newUser = { 
             id: Date.now(), 
@@ -379,6 +454,8 @@ export const mockApi = {
             salt,
             password: hashedPassword,
             passkeyToken,
+            devicePublicKey,
+            passkeyProof: proof,
             allowedPages: ['dashboard', 'products', 'categories', 'invoices', 'expenses', 'transactions', 'profile']
         };
         users.push(newUser);
@@ -388,9 +465,6 @@ export const mockApi = {
             storeName: 'My Store',
             currency: sanitizeString(userData.currency_code) || 'LKR'
         });
-        
-        const devicePublicKey = await idbStore.get('sms_device_public_key');
-        const signature = await signData(trimmedName + ":" + passkeyToken);
 
         await mockApi.logAction('REGISTER', `Initial Admin registered: ${trimmedName}`);
         return { ok: true, json: async () => ({ 
@@ -399,7 +473,9 @@ export const mockApi = {
                 name: trimmedName,
                 token: passkeyToken,
                 devicePublicKey,
-                signature
+                deviceId,
+                signature,
+                proof
             }
         }) };
     },
@@ -423,7 +499,6 @@ export const mockApi = {
         
         const salt = generateSalt();
         const hashedPassword = await hashPassword(employeeData.password, salt);
-        const passkeyToken = generateSalt();
 
         const newEmployee = { 
             id: Date.now(), 
@@ -432,7 +507,6 @@ export const mockApi = {
             status: 'active',
             salt,
             password: hashedPassword,
-            passkeyToken,
             allowedPages: (employeeData.allowedPages || []).map(p => sanitizeString(p))
         };
         users.push(newEmployee);
@@ -476,29 +550,6 @@ export const mockApi = {
             return { ok: true, json: async () => ({ message: 'Password updated successfully' }) };
         }
         return { ok: false, json: async () => ({ error: 'Employee not found' }) };
-    },
-
-    generatePasskey: async (userId) => {
-        await delay(300);
-        const users = await getStorage('sms_users', []);
-        const idx = users.findIndex(u => u.id === Number(userId));
-        if (idx > -1) {
-            const token = generateSalt();
-            users[idx].passkeyToken = token;
-            
-            const devicePublicKey = await idbStore.get('sms_device_public_key');
-            const signature = await signData(users[idx].name + ":" + token);
-
-            await setStorage('sms_users', users);
-            await mockApi.logAction('GENERATE_PASSKEY', `Generated new passkey for user ${users[idx].name}`);
-            return { ok: true, json: async () => ({ 
-                name: users[idx].name,
-                token,
-                devicePublicKey,
-                signature
-            }) };
-        }
-        return { ok: false, json: async () => ({ error: 'User not found' }) };
     },
 
     verifyBackupSchema: (backupData) => {
@@ -596,16 +647,37 @@ export const mockApi = {
             .filter(inv => inv.due_date && new Date(inv.due_date) < now)
             .reduce((sum, inv) => sum + (Number(inv.total) || 0), 0);
 
+        const products = await getStorage('sms_products', []);
+        const productNameById = Object.fromEntries(
+            products.map((p) => [Number(p.id), p.name])
+        );
+
         const itemMap = {};
         invoices
-            .filter(inv => ['Sent', 'Paid'].includes(inv.status))
-            .forEach(inv => {
-                (inv.items || []).forEach(item => {
-                    const key = String(item.product_id);
+            .filter((inv) => ['Sent', 'Paid'].includes(inv.status))
+            .forEach((inv) => {
+                (inv.items || []).forEach((item) => {
+                    const qty = Number(item.quantity) || 0;
+                    if (qty <= 0) return;
+
+                    const productId = item.product_id ? Number(item.product_id) : null;
+                    const name = (
+                        item.product_name
+                        || (productId ? productNameById[productId] : '')
+                        || item.description
+                        || 'Custom Item'
+                    ).trim();
+
+                    const key = productId ? `p-${productId}` : `c-${name.toLowerCase()}`;
+
                     if (!itemMap[key]) {
-                        itemMap[key] = { id: item.product_id, name: item.product_name || item.name || 'Unknown', total_quantity: 0 };
+                        itemMap[key] = {
+                            id: productId || key,
+                            name,
+                            total_quantity: 0
+                        };
                     }
-                    itemMap[key].total_quantity += Number(item.quantity) || 0;
+                    itemMap[key].total_quantity += qty;
                 });
             });
         const topItems = Object.values(itemMap)
@@ -734,6 +806,12 @@ export const mockApi = {
         return { ok: true, json: async () => ({ message: 'Transaction successful' }) };
     },
 
+    getTransactions: async () => {
+        await delay(300);
+        const transactions = await getFlattenedFifo('sms_transactions_fifo');
+        return { ok: true, json: async () => ({ transactions }) };
+    },
+
     // Invoices
     getInvoices: async () => {
         await delay(300);
@@ -748,18 +826,28 @@ export const mockApi = {
         const sanitizedItems = (invoiceData.items || []).map(item => {
             const prodIdx = products.findIndex(p => p.id === Number(item.product_id));
             const qtyNum = Number(item.quantity) || 0;
+            const catalogProduct = prodIdx > -1 ? products[prodIdx] : null;
             if (prodIdx > -1) {
                 products[prodIdx].quantity -= qtyNum;
             }
+            const productName = sanitizeString(item.product_name)
+                || (catalogProduct ? sanitizeString(catalogProduct.name) : '')
+                || sanitizeString(item.description)
+                || 'Custom Item';
             return {
                 product_id: item.product_id ? Number(item.product_id) : '',
-                product_name: item.product_name ? sanitizeString(item.product_name) : '',
-                description: sanitizeString(item.description) || '',
+                product_name: productName,
+                description: sanitizeString(item.description) || productName,
                 quantity: qtyNum,
-                unit_price: Number(item.unit_price) || 0
+                unit_price: Number(item.unit_price) || (catalogProduct ? Number(catalogProduct.price) : 0) || 0
             };
         });
         await setStorage('sms_products', products);
+
+        const computedTotal = sanitizedItems.reduce(
+            (sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.unit_price) || 0),
+            0
+        );
 
         const newInvoice = {
             id: Date.now(),
@@ -771,7 +859,7 @@ export const mockApi = {
             due_date: sanitizeString(invoiceData.due_date) || '',
             notes: sanitizeString(invoiceData.notes) || '',
             status: sanitizeString(invoiceData.status) || 'Draft',
-            total: Number(invoiceData.total) || 0,
+            total: computedTotal,
             items: sanitizedItems
         };
         await pushToDailyFifo('sms_invoices_fifo', newInvoice);

@@ -57,7 +57,7 @@ const Layout = () => {
 
                 <div className="sidebar-footer">
                     <div className="user-id-label">
-                        User: <span>{user?.name || `${user?.firstName || ''} ${user?.lastName || ''}`.trim()}</span>
+                        User: <span>{user?.name || 'User'}</span>
                     </div>
                     <button className="logout-btn" onClick={handleLogout}>Log Out</button>
                 </div>

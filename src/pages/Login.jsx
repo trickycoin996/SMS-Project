@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { ToastContext } from '../context/ToastContext';
 import { mockApi } from '../services/mockApi';
+import { parsePasskeyFile, isValidPasskeyStructure, readFileAsText, readPasskeyBackup } from '../utils/passkeyFile';
 import './Auth.css';
 
 const Login = () => {
@@ -14,7 +15,7 @@ const Login = () => {
     
     const { login } = useContext(AuthContext);
     const { showToast } = useContext(ToastContext);
-    const [hasAdmin, setHasAdmin] = useState(true); // default to true to prevent flash
+    const [hasAdmin, setHasAdmin] = useState(true);
     const passkeyInputRef = useRef(null);
 
     useEffect(() => {
@@ -47,7 +48,7 @@ const Login = () => {
             const response = await mockApi.login(trimmedName, trimmedPassword);
             const data = await response.json();
             if (response.ok) {
-                login(data.user, data.token, false);
+                await login(data.user, data.token, false);
                 showToast(`Successfully logged in as ${data.user.name}`, 'success');
                 navigate('/');
             } else {
@@ -60,42 +61,58 @@ const Login = () => {
         }
     };
 
+    const signInWithPasskey = async (passkeyData) => {
+        if (!isValidPasskeyStructure(passkeyData)) {
+            showToast('Invalid passkey file. It must include name, token, and proof or signature fields.', 'error');
+            return;
+        }
+        const response = await mockApi.loginWithPasskey(passkeyData);
+        const data = await response.json();
+        if (response.ok) {
+            await login(data.user, data.token, true);
+            showToast(`Welcome back, ${data.user.name}! (Admin passkey sign-in)`, 'success');
+            navigate('/');
+        } else {
+            showToast(data.error || 'Passkey authentication failed', 'error');
+        }
+    };
+
     const handlePasskeyFileChange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            try {
-                const passkeyData = JSON.parse(event.target.result);
-                if (!passkeyData.name || !passkeyData.token || !passkeyData.devicePublicKey || !passkeyData.signature) {
-                    showToast('Invalid passkey file format.', 'error');
-                    return;
-                }
-                setLoading(true);
-                const response = await mockApi.loginWithPasskey(passkeyData);
-                const data = await response.json();
-                if (response.ok) {
-                    login(data.user, data.token, true);
-                    showToast(`Welcome back, ${data.user.name}! (Passkey Sign-In)`, 'success');
-                    navigate('/');
-                } else {
-                    showToast(data.error || 'Passkey authentication failed', 'error');
-                }
-            } catch (err) {
-                showToast('Failed to parse passkey file.', 'error');
-            } finally {
-                setLoading(false);
-                if (passkeyInputRef.current) passkeyInputRef.current.value = ''; // clear input
+        setLoading(true);
+        try {
+            const fileText = await readFileAsText(file);
+            const passkeyData = parsePasskeyFile(fileText);
+            await signInWithPasskey(passkeyData);
+        } catch (err) {
+            console.error('Passkey sign-in error:', err);
+            showToast(err.message || 'Passkey sign-in failed. Please try again.', 'error');
+        } finally {
+            setLoading(false);
+            if (passkeyInputRef.current) passkeyInputRef.current.value = '';
+        }
+    };
+
+    const handleUseSavedPasskey = async () => {
+        setLoading(true);
+        try {
+            const backup = await readPasskeyBackup();
+            if (!backup) {
+                showToast('No passkey found on this device. Upload your passkey .json file from Downloads.', 'error');
+                return;
             }
-        };
-        reader.readAsText(file);
+            await signInWithPasskey(backup);
+        } catch (err) {
+            showToast(err.message || 'Could not use saved passkey.', 'error');
+        } finally {
+            setLoading(false);
+        }
     };
 
     const triggerPasskeyUpload = () => {
-        if (passkeyInputRef.current) {
-            passkeyInputRef.current.click();
-        }
+        passkeyInputRef.current?.click();
     };
 
     return (
@@ -148,43 +165,24 @@ const Login = () => {
                         </div>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
-                        <button type="submit" disabled={loading} className="auth-btn" style={{ flex: 2, margin: 0 }}>
-                            {loading ? 'Signing in...' : 'Sign In'}
-                        </button>
-                        <button 
-                            type="button" 
-                            onClick={triggerPasskeyUpload} 
-                            disabled={loading} 
-                            className="auth-btn" 
-                            style={{ 
-                                flex: 1, 
-                                margin: 0, 
-                                backgroundColor: 'var(--secondary-color, #10b981)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '8px'
-                            }}
-                        >
-                            <i className="fas fa-key"></i> Passkey
-                        </button>
-                    </div>
+                    <button type="submit" disabled={loading} className="auth-btn" style={{ marginTop: '1.5rem' }}>
+                        {loading ? 'Signing in...' : 'Sign In'}
+                    </button>
 
-                    {/* Hidden file input for Passkey JSON upload */}
                     <input 
                         type="file" 
                         ref={passkeyInputRef} 
                         onChange={handlePasskeyFileChange} 
-                        accept=".json" 
+                        accept=".json,application/json" 
                         style={{ display: 'none' }} 
                     />
                 </form>
 
-                <p className="auth-footer" style={{ marginBottom: '0.5rem', marginTop: '1.5rem' }}>
+                <p className="auth-footer" style={{ marginBottom: '0.35rem', marginTop: '1.5rem' }}>
                     <button 
                         type="button" 
                         onClick={triggerPasskeyUpload}
+                        disabled={loading}
                         style={{
                             background: 'none',
                             border: 'none',
@@ -195,7 +193,26 @@ const Login = () => {
                             cursor: 'pointer'
                         }}
                     >
-                        Sign in with Passkey file
+                        Sign in with admin passkey file
+                    </button>
+                </p>
+                <p className="auth-footer" style={{ marginTop: 0, marginBottom: '0.5rem' }}>
+                    <button 
+                        type="button" 
+                        onClick={handleUseSavedPasskey}
+                        disabled={loading}
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--text-muted)',
+                            fontWeight: '500',
+                            fontSize: '0.9rem',
+                            padding: 0,
+                            boxShadow: 'none',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Use passkey saved on this device
                     </button>
                 </p>
                 {hasAdmin ? (
