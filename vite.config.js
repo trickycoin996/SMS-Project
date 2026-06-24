@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 // https://vitejs.dev/config/
-export default defineConfig(({ command }) => ({
+export default defineConfig({
     plugins: [
         react(),
         VitePWA({
@@ -48,6 +48,5 @@ export default defineConfig(({ command }) => ({
         port: 5173,
         strictPort: true
     },
-    // GitHub Pages project site: https://<user>.github.io/SMS-Project/
-    base: command === 'build' ? (process.env.VITE_BASE_PATH || '/SMS-Project/') : '/',
+    base: './',
 }));
