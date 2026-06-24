@@ -14,10 +14,6 @@ export default defineConfig({
                 enabled: true, // Enables PWA checking while running npm run dev
                 type: 'module',
             },
-            workbox: {
-                globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
-                cleanupOutdatedCaches: true,
-            },
             manifest: {
                 name: 'Store Management System',
                 short_name: 'SMS',
@@ -25,8 +21,8 @@ export default defineConfig({
                 theme_color: '#ffffff',
                 background_color: '#ffffff',
                 display: 'standalone',
-                start_url: '.',
-                scope: '.',
+                start_url: './index.html',
+                scope: './',
                 icons: [
                     {
                         src: 'icon.svg',
@@ -41,7 +37,12 @@ export default defineConfig({
                         purpose: 'maskable'
                     }
                 ]
-            }
+            },
+            injectRegister: 'auto',
+            workbox: {
+                globPatterns: ['**/*.{js,css,html,ico,png,svg,json,webmanifest}'],
+                cleanupOutdatedCaches: true,
+            },
         })
     ],
     server: {
@@ -49,4 +50,4 @@ export default defineConfig({
         strictPort: true
     },
     base: './',
-}));
+});
