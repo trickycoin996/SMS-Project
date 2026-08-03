@@ -1,5 +1,10 @@
 # Store Management System (SMS)
-### CIT310 Information Technology Project
+
+> **Sri Lanka Technology Campus**  
+> *Bachelor of Applied Information Technology - Class of 2026A*  
+> **CIT310 Information Technology Project** | Third Year Second Semester  
+> **S.A.D. Sithmini** | **22UG3-0691**
+
 ---
 ## 📱 App Overview
 The **Store Management System (SMS)** is a low-cost, lightweight Progressive Web App (PWA) designed for small and medium retail businesses. It allows store owners and staff to manage inventory, track transactions, compile invoices, and view daily sales summaries without requiring expensive point-of-sale (POS) hardware.
@@ -30,10 +35,12 @@ Before running the application, make sure you have the following installed:
 *   A modern web browser supporting IndexedDB and Web Crypto (e.g., Chrome, Edge, Firefox, or Safari)
 ---
 ### ⚙️ Environment Variables
+
 This project runs entirely on the client side using local browser storage (IndexedDB) and **does not require any external environment variables**. A `.env` file is not needed.
 ---
 ## 🌐 Deploying to GitHub Pages (Installable PWA)
-To deploy the Store Management System (SMS) to GitHub Pages and make it installable as a Progressive Web App (PWA), follow these steps:
+
+Deployed the Store Management System (SMS) to GitHub Pages and make it installable as a Progressive Web App (PWA):
 [SMS Project](https://trickycoin996.github.io/SMS-Project/)
 ---
 ## 👥 Team Contributions
